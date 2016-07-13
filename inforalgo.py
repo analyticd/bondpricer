@@ -1,28 +1,24 @@
 """
 mpfi - Interface to interact with inforalgo's database.
 
-Written by Sheng Chai and Alexandre Almosni
+Written by Sheng Chai and Alexandre Almosni   alexandre.almosni@gmail.com
 (C) 2015-2016 Sheng Chai and Alexandre Almosni
 Released under Apache 2.0 license. More info at http://www.apache.org/licenses/LICENSE-2.0
 
-Functions: 
-createTable() : Creates a database table. This function is only used for testing with sqlite
-deleteTable() : Function to deletes table at start of day, then download bid size information from Bloomberg.
-downloadBidSizeInfo()
-fillData()
-populateTable()
-readTable()
 
-Global Variables:
-connectionString : sqlalchemy dialect to connect to MSSQL database 
-engine : create a connection engine to inforalgo's database 
+Defines the SQLTable class which is the representation of the Inforalgo table
+
+Functions are self-explanatory.
+
+Note that we shouldn't attempt to recreate the tables ourselves - this is dealt by Inforalgo people.
+
 """
 
 import pandas
 import datetime
 import sqlalchemy
-from sqlalchemy import Column, CHAR, DATETIME, VARCHAR, TIMESTAMP
-from pandas.io import sql
+#from sqlalchemy import Column, CHAR, DATETIME, VARCHAR, TIMESTAMP
+#from pandas.io import sql
 
 
 ##############
@@ -106,6 +102,91 @@ bbrgCompleteTime = None
 bbrgPendTime     = None
 bbrgExtractTime  = None
 #################
+
+
+class SQLTable():
+    def __init__(self, bdm=None):
+        self.bdm = bdm
+        #Create sqlalchemy engine
+        #connectionString = "mssql+pyodbc://InforAlgo_UAT"#"mssql+pyodbc://CIBLDNGSQLCU01C\GLOBALMC_UAT03/inftest?driver=SQL+Server+Native+Client+11.0?trusted_connection=yes"
+        connectionString = 'mssql+pyodbc:///?odbc_connect=DRIVER%3D%7BSQL+Server%7D%3BDatabase%3Dinftest%3BSERVER%3DCIBLDNGSQLCU01C%5Cglobalmc_uat03'
+        connectionStringPRD = 'mssql+pyodbc:///?odbc_connect=DRIVER%3D%7BSQL+Server%7D%3BDatabase%3Dinftest%3BSERVER%3DCIBLDNGAPPVP080%5Cprd03'
+        self.engine = sqlalchemy.create_engine(connectionString, legacy_schema_aliasing=False)
+        try:
+            self.connection = self.engine.connect()
+            print  'Connected to ' + connectionString
+        except:
+            print 'Connection to ' + connectionString + ' failed'
+        pass
+
+    def empty_table(self):
+        m = sqlalchemy.MetaData()
+        tblQuote = sqlalchemy.Table('tblQuote',m)
+        self.connection.execute(tblQuote.delete())
+        pass
+
+    def delete_record(self, isin):
+        #sql.execute("DELETE tblQuote WHERE bbrgSec6id='" + isin + "'", self.engine) ##THIS IS USING PANDAS
+        self.connection.execute("DELETE tblQuote WHERE bbrgSec6id='" + isin + "'")
+
+
+    def insert_record(self, isin, bid_price, ask_price, bid_size, ask_size):
+        bbrgSec6id = isin
+        bbrgSec14id = bbrgSec6id
+        bbrgTrana = 'B'
+        bbrgVala = bid_price
+        bbrgTranb = 'Z'
+        bbrgValb = str(bid_size)
+        bbrgTranc = 'A'
+        bbrgValc = ask_price
+        bbrgTrand = 'Z'
+        bbrgVald = str(ask_size)
+        now = datetime.datetime.now()
+        bbrgDate = now.strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]
+        #bbrgTime = now.strftime('%H:%M:%S')
+        bbrgTime = bbrgDate[11:19] #%H:%M:%S 20x faster than above
+        bbrgInstance = 4
+        cols = ['bbrgDate', 'bbrgTime', 'bbrgStatus', 'bbrgSend6', 'bbrgSend14', 'bbrgRectype', 'bbrgSource', 'bbrgSectype', 'bbrgSec6id', 'bbrgInstance', 'bbrgTrana', 'bbrgConda', 'bbrgVala', 'bbrgTranb', 'bbrgCondb', 'bbrgValb', 'bbrgTranc', 'bbrgCondc', 'bbrgValc', 'bbrgTrand', 'bbrgCondd', 'bbrgVald', 'bbrgTrane', 'bbrgConde', 'bbrgVale', 'bbrgTranf', 'bbrgCondf', 'bbrgValf', 'bbrgTrang', 'bbrgCondg', 'bbrgValg', 'bbrgTranh', 'bbrgCondh', 'bbrgValh', 'bbrgTrani', 'bbrgCondi', 'bbrgVali', 'bbrgTranj', 'bbrgCondj', 'bbrgValj', 'bbrgTrank', 'bbrgCondk', 'bbrgValk', 'bbrgTranl', 'bbrgCondl', 'bbrgVall', 'bbrgOddlot', 'bbrgCcyflag', 'bbrgSourceid', 'bbrgAcctype', 'bbrgSec14id', 'bbrgSecshrt', 'bbrgAccbm', 'bbrgBmsecid', 'bbrgBmdesc', 'bbrgFunct', 'bbrgMonid', 'bbrgLdind', 'bbrgAmdind', 'bbrgFrcol', 'bbrgLdtype', 'bbrgAbspg', 'bbrgMono', 'bbrgMonpg', 'bbrgCmnt', 'bbrgRow', 'bbrgRsrv', 'bbrgPackid', 'bbrgYlwky', 'bbrgSprice', 'bbrgR2srv', 'bbrgSysnm', 'bbrgUsernm', 'bbrgOrigMonid', 'bbrgOrigMono', 'bbrgOrigAbsPg', 'bbrgOrigRow', 'bbrgLevel']
+        record = pandas.DataFrame(columns=cols)
+        record.loc[0] = [bbrgDate, bbrgTime, bbrgStatus, bbrgSend6, bbrgSend14, bbrgRectype, bbrgSource, bbrgSectype, bbrgSec6id, bbrgInstance, bbrgTrana, bbrgConda, bbrgVala, bbrgTranb, bbrgCondb, bbrgValb, bbrgTranc, bbrgCondc, bbrgValc, bbrgTrand, bbrgCondd, bbrgVald, bbrgTrane, bbrgConde, bbrgVale, bbrgTranf, bbrgCondf, bbrgValf, bbrgTrang, bbrgCondg, bbrgValg, bbrgTranh, bbrgCondh, bbrgValh, bbrgTrani, bbrgCondi, bbrgVali, bbrgTranj, bbrgCondj, bbrgValj, bbrgTrank, bbrgCondk, bbrgValk, bbrgTranl, bbrgCondl, bbrgVall, bbrgOddlot, bbrgCcyflag, bbrgSourceid, bbrgAcctype, bbrgSec14id, bbrgSecshrt, bbrgAccbm, bbrgBmsecid, bbrgBmdesc, bbrgFunct, bbrgMonid, bbrgLdind, bbrgAmdind, bbrgFrcol, bbrgLdtype, bbrgAbspg, bbrgMono, bbrgMonpg, bbrgCmnt, bbrgRow, bbrgRsrv, bbrgPackid, bbrgYlwky, bbrgSprice, bbrgR2srv, bbrgSysnm, bbrgUsernm, bbrgOrigMonid, bbrgOrigMono, bbrgOrigAbsPg, bbrgOrigRow, bbrgLevel]#, bbrgCompleteTime, bbrgPendTime, bbrgExtractTime]
+        record.to_sql('tblQuote',self.engine,schema='dbo',if_exists='append',index=False) 
+        pass
+
+    def send_price(self, isin, bid_price, ask_price, bid_size, ask_size):
+        bbrgSec6id = isin
+        bbrgTrana = 'B'
+        bbrgVala = bid_price
+        bbrgTranb = 'Z'
+        bbrgValb = str(bid_size)
+        bbrgTranc = 'A'
+        bbrgValc = ask_price
+        bbrgTrand = 'Z'
+        bbrgVald = str(ask_size)
+        now = datetime.datetime.now()
+        bbrgDate = now.strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]
+        #bbrgTime = now.strftime('%H:%M:%S')
+        bbrgTime = bbrgDate[11:19] #%H:%M:%S 20x faster than above
+        sqlfields = "bbrgTrana='{}', bbrgVala='{}', bbrgTranb='{}', bbrgValb='{}',bbrgTranc='{}', bbrgValc='{}', bbrgTrand='{}', bbrgVald='{}', bbrgDate='{}', bbrgTime='{}', bbrgStatus='{}', bbrgSend6='Y' WHERE bbrgSec6id='{}'".format(bbrgTrana,bbrgVala,bbrgTranb,bbrgValb,bbrgTranc,bbrgValc,bbrgTrand,bbrgVald,bbrgDate,bbrgTime, bbrgStatus, bbrgSec6id)
+        #print "UPDATE tblQuote SET " + sqlfields
+        #sql.execute("UPDATE tblQuote SET " + sqlfields, self.engine) ##THIS IS USING PANDAS
+        self.connection.execute("UPDATE tblQuote SET " + sqlfields)
+        pass
+
+    def read_table(self):
+        df = pandas.read_sql_table('tblQuote',self.engine,schema='dbo')
+        return df[['bbrgDate','bbrgTime','bbrgStatus','bbrgSec6id','bbrgVala','bbrgValc','bbrgValb','bbrgVald']]
+
+    # def start_of_day(self):
+    #     try:#Read table - it could be empty
+    #         df = pandas.read_sql_table('tblQuote',engine,schema='dbo')
+    #         dt = datetime.datetime.now()
+    #         dt = datetime.datetime(dt.year, dt.month, dt.day)
+    #         if df['bbrgDate'].max() < dt:
+    #             self.empty_table()
+    #             #recreateRecords(bdm)
+    #     except:
+    #         pass
+
 
 
 
@@ -354,81 +435,3 @@ bbrgExtractTime  = None
 
 
 
-
-class SQLTable():
-    def __init__(self, bdm=None):
-        self.bdm = bdm
-        #Create sqlalchemy engine
-        #connectionString = "mssql+pyodbc://InforAlgo_UAT"#"mssql+pyodbc://CIBLDNGSQLCU01C\GLOBALMC_UAT03/inftest?driver=SQL+Server+Native+Client+11.0?trusted_connection=yes"
-        connectionString = 'mssql+pyodbc:///?odbc_connect=DRIVER%3D%7BSQL+Server%7D%3BDatabase%3Dinftest%3BSERVER%3DCIBLDNGSQLCU01C%5Cglobalmc_uat03'
-        self.engine = sqlalchemy.create_engine(connectionString)
-        try:
-            self.connection = self.engine.connect()
-            print  'Connected to ' + connectionString
-        except:
-            print 'Connection to ' + connectionString + ' failed'
-        pass
-
-    def empty_table(self):
-        m = sqlalchemy.MetaData()
-        tblQuote = sqlalchemy.Table('tblQuote',m)
-        self.connection.execute(tblQuote.delete())
-        pass
-
-    def delete_record(self, isin):
-        sql.execute("DELETE tblQuote WHERE bbrgSec6id='" + isin + "'", self.engine)
-
-    def insert_record(self, isin, bid_price, ask_price, bid_size, ask_size):
-        bbrgSec6id = isin
-        bbrgSec14id = bbrgSec6id
-        bbrgTrana = 'B'
-        bbrgVala = bid_price
-        bbrgTranb = 'Z'
-        bbrgValb = str(bid_size)
-        bbrgTranc = 'A'
-        bbrgValc = ask_price
-        bbrgTrand = 'Z'
-        bbrgVald = str(ask_size)
-        now = datetime.datetime.now()
-        bbrgDate = now.strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]
-        bbrgTime = now.strftime('%H:%M:%S')
-        bbrgInstance = 4
-        cols = ['bbrgDate', 'bbrgTime', 'bbrgStatus', 'bbrgSend6', 'bbrgSend14', 'bbrgRectype', 'bbrgSource', 'bbrgSectype', 'bbrgSec6id', 'bbrgInstance', 'bbrgTrana', 'bbrgConda', 'bbrgVala', 'bbrgTranb', 'bbrgCondb', 'bbrgValb', 'bbrgTranc', 'bbrgCondc', 'bbrgValc', 'bbrgTrand', 'bbrgCondd', 'bbrgVald', 'bbrgTrane', 'bbrgConde', 'bbrgVale', 'bbrgTranf', 'bbrgCondf', 'bbrgValf', 'bbrgTrang', 'bbrgCondg', 'bbrgValg', 'bbrgTranh', 'bbrgCondh', 'bbrgValh', 'bbrgTrani', 'bbrgCondi', 'bbrgVali', 'bbrgTranj', 'bbrgCondj', 'bbrgValj', 'bbrgTrank', 'bbrgCondk', 'bbrgValk', 'bbrgTranl', 'bbrgCondl', 'bbrgVall', 'bbrgOddlot', 'bbrgCcyflag', 'bbrgSourceid', 'bbrgAcctype', 'bbrgSec14id', 'bbrgSecshrt', 'bbrgAccbm', 'bbrgBmsecid', 'bbrgBmdesc', 'bbrgFunct', 'bbrgMonid', 'bbrgLdind', 'bbrgAmdind', 'bbrgFrcol', 'bbrgLdtype', 'bbrgAbspg', 'bbrgMono', 'bbrgMonpg', 'bbrgCmnt', 'bbrgRow', 'bbrgRsrv', 'bbrgPackid', 'bbrgYlwky', 'bbrgSprice', 'bbrgR2srv', 'bbrgSysnm', 'bbrgUsernm', 'bbrgOrigMonid', 'bbrgOrigMono', 'bbrgOrigAbsPg', 'bbrgOrigRow', 'bbrgLevel']
-        record = pandas.DataFrame(columns=cols)
-        record.loc[0] = [bbrgDate, bbrgTime, bbrgStatus, bbrgSend6, bbrgSend14, bbrgRectype, bbrgSource, bbrgSectype, bbrgSec6id, bbrgInstance, bbrgTrana, bbrgConda, bbrgVala, bbrgTranb, bbrgCondb, bbrgValb, bbrgTranc, bbrgCondc, bbrgValc, bbrgTrand, bbrgCondd, bbrgVald, bbrgTrane, bbrgConde, bbrgVale, bbrgTranf, bbrgCondf, bbrgValf, bbrgTrang, bbrgCondg, bbrgValg, bbrgTranh, bbrgCondh, bbrgValh, bbrgTrani, bbrgCondi, bbrgVali, bbrgTranj, bbrgCondj, bbrgValj, bbrgTrank, bbrgCondk, bbrgValk, bbrgTranl, bbrgCondl, bbrgVall, bbrgOddlot, bbrgCcyflag, bbrgSourceid, bbrgAcctype, bbrgSec14id, bbrgSecshrt, bbrgAccbm, bbrgBmsecid, bbrgBmdesc, bbrgFunct, bbrgMonid, bbrgLdind, bbrgAmdind, bbrgFrcol, bbrgLdtype, bbrgAbspg, bbrgMono, bbrgMonpg, bbrgCmnt, bbrgRow, bbrgRsrv, bbrgPackid, bbrgYlwky, bbrgSprice, bbrgR2srv, bbrgSysnm, bbrgUsernm, bbrgOrigMonid, bbrgOrigMono, bbrgOrigAbsPg, bbrgOrigRow, bbrgLevel]#, bbrgCompleteTime, bbrgPendTime, bbrgExtractTime]
-        record.to_sql('tblQuote',self.engine,schema='dbo',if_exists='append',index=False) 
-        pass
-
-    def send_price(self, isin, bid_price, ask_price, bid_size, ask_size):
-        bbrgSec6id = isin
-        bbrgTrana = 'B'
-        bbrgVala = bid_price
-        bbrgTranb = 'Z'
-        bbrgValb = str(bid_size)
-        bbrgTranc = 'A'
-        bbrgValc = ask_price
-        bbrgTrand = 'Z'
-        bbrgVald = str(ask_size)
-        now = datetime.datetime.now()
-        bbrgDate = now.strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]
-        bbrgTime = now.strftime('%H:%M:%S')
-        bbrgSec6id = isin
-        sqlfields = "bbrgTrana='{}', bbrgVala='{}', bbrgTranb='{}', bbrgValb='{}',bbrgTranc='{}', bbrgValc='{}', bbrgTrand='{}', bbrgVald='{}', bbrgDate='{}', bbrgTime='{}', bbrgStatus='{}', bbrgSend6='Y' WHERE bbrgSec6id='{}'".format(bbrgTrana,bbrgVala,bbrgTranb,bbrgValb,bbrgTranc,bbrgValc,bbrgTrand,bbrgVald,bbrgDate,bbrgTime, bbrgStatus, bbrgSec6id)
-        #print "UPDATE tblQuote SET " + sqlfields
-        sql.execute("UPDATE tblQuote SET " + sqlfields, self.engine)
-        pass
-
-    def start_of_day(self):
-        try:#Read table - it could be empty
-            df = pandas.read_sql_table('tblQuote',engine,schema='dbo')
-            dt = datetime.datetime.now()
-            dt = datetime.datetime(dt.year, dt.month, dt.day)
-            if df['bbrgDate'].max() < dt:
-                self.empty_table()
-                #recreateRecords(bdm)
-        except:
-            pass
-
-    def read_table(self):
-        df = pandas.read_sql_table('tblQuote',self.engine,schema='dbo')
-        return df[['bbrgDate','bbrgTime','bbrgStatus','bbrgSec6id','bbrgVala','bbrgValc','bbrgValb','bbrgVald']]
