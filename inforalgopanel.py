@@ -174,7 +174,7 @@ class InforalgoControlPanel(wx.Panel):
         for (i,bonddata) in self.bdm.df.iterrows():
             if bonddata['BID_SIZE'] != 0 or bonddata['ASK_SIZE'] != 0:
                 try:
-                    self.table.send_price(bonddata['ISIN'], bonddata['BID'], bonddata['ASK'], int(bonddata['BID_SIZE']), int(bonddata['ASK_SIZE']))
+                    self.table.send_price(bonddata['ISIN'], bonddata['BID'], bonddata['ASK'], int(float(bonddata['BID_SIZE'])), int(float(bonddata['ASK_SIZE'])))
                 except:
                     print 'Failed to send price for ' + bonddata['ISIN']
         self.onRefreshButton(event)
@@ -187,7 +187,10 @@ class InforalgoControlPanel(wx.Panel):
         bdm_isins = list(self.bdm.df['ISIN'])
         for (i,row) in df.iterrows():
             if row['bbrgSec6id'] in bdm_isins:
-                self.table.send_price(row['bbrgSec6id'], row['bbrgVala'], row['bbrgValc'], int(row['bbrgValb']), int(row['bbrgVald']))
+                try:
+                    self.table.send_price(row['bbrgSec6id'], float(row['bbrgVala']), float(row['bbrgValc']), int(float(row['bbrgValb'])), int(float(row['bbrgVald'])))
+                except:
+                    print 'Failed to send price for ' + row['bbrgSec6id']
         pass
 
     def onRefreshButton(self, event):

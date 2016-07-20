@@ -64,7 +64,7 @@ if wxVersion=='2.8':
 else:
     from wx.lib.pubsub import pub
 
-from StaticDataImport import bonds, DEFPATH, APPPATH, bondRuns, frontToEmail, SPECIALBONDS, grid_labels, colFormats, runTitleStr
+from StaticDataImport import bonds, DEFPATH, APPPATH, bondRuns, frontToEmail, SPECIALBONDS, grid_labels, colFormats, runTitleStr, regsToBondName
 from BondDataModel import BondDataModel
 
 class MessageContainer():
@@ -412,6 +412,8 @@ class PricingGrid(gridlib.Grid):
         self.clickedISIN = ''
         self.clickedBond = ''
 
+        self.tabKeyCounter = 0
+
         pub.subscribe(self.updateLine, "BOND_PRICE_UPDATE")
         pub.subscribe(self.updatePositions, "POSITION_UPDATE")
 
@@ -448,14 +450,33 @@ class PricingGrid(gridlib.Grid):
 
         self.Bind(gridlib.EVT_GRID_CELL_RIGHT_CLICK, self.showPopUpMenu)
         self.Bind(gridlib.EVT_GRID_CELL_CHANGE, self.onEditCell)
+        self.Bind(wx.EVT_KEY_DOWN, self.onKeyDown)
 
         self.showAllqID = wx.NewId()
         self.showTradeHistoryID = wx.NewId()
         self.showDESID = wx.NewId()
         self.showCNID = wx.NewId()
         self.showGPID = wx.NewId()
+        self.buyRegsID = wx.NewId()
+        self.sellRegsID = wx.NewId()
+        self.buy144AID = wx.NewId()
+        self.sell144AID = wx.NewId()
         self.copyLineID = wx.NewId()
         self.copyISINID = wx.NewId()
+        self.pastePricesID = wx.NewId()
+        self.Bind(wx.EVT_MENU, self.showALLQ, id=self.showAllqID)
+        self.Bind(wx.EVT_MENU, self.showTradeHistory, id=self.showTradeHistoryID)
+        self.Bind(wx.EVT_MENU, self.showDES, id=self.showDESID)
+        self.Bind(wx.EVT_MENU, self.showCN, id=self.showCNID)
+        self.Bind(wx.EVT_MENU, self.showGP, id=self.showGPID)
+        self.Bind(wx.EVT_MENU, self.buyRegs, id=self.buyRegsID)
+        self.Bind(wx.EVT_MENU, self.sellRegs, id=self.sellRegsID)
+        self.Bind(wx.EVT_MENU, self.buy144A, id=self.buy144AID)
+        self.Bind(wx.EVT_MENU, self.sell144A, id=self.sell144AID)
+        self.Bind(wx.EVT_MENU, self.copyLine, id=self.copyLineID)
+        self.Bind(wx.EVT_MENU, self.copyISIN, id=self.copyISINID)
+        self.Bind(wx.EVT_MENU, self.onPastePrices, id=self.pastePricesID)
+
 
     def initialPaint(self):
         """
@@ -517,6 +538,22 @@ class PricingGrid(gridlib.Grid):
                         self.SetCellValue(i, j, bond)
                         if bond != '':
                             self.SetRowAttr(i, headerlineattr)
+
+    def onKeyDown(self, event):
+        keycode = event.GetKeyCode()
+        if keycode == wx.WXK_TAB:
+            self.tabKeyCounter = self.tabKeyCounter + 1
+        elif keycode == wx.WXK_NUMPAD_ENTER or keycode == wx.WXK_RETURN:
+            for i in range(0,self.tabKeyCounter):
+                self.MoveCursorLeft(False)
+            self.tabKeyCounter = 0
+        elif keycode == wx.WXK_WINDOWS_MENU:
+            self.clickedBond = self.GetCellValue(self.GetGridCursorRow(), self.columnList.index('BOND'))
+            self.showPopUpMenu(event, True)
+        else:
+            pass
+        event.Skip() # important, otherwise one would need to define all possible events
+
 
     def onEditCell(self,event):
         row = event.GetRow()
@@ -614,7 +651,75 @@ class PricingGrid(gridlib.Grid):
         self.SetCellBackgroundColour(row, self.columnList.index('BID_S'), wx.YELLOW)
         self.SetCellBackgroundColour(row, self.columnList.index('ASK_S'), wx.YELLOW)
 
-    def showPopUpMenu(self, event):
+    def onPastePrices(self, event):
+        if not wx.TheClipboard.IsOpened():
+            clipboard = wx.TextDataObject()
+            if wx.TheClipboard.Open():
+                wx.TheClipboard.GetData(clipboard)
+                wx.TheClipboard.Close()
+            data = clipboard.GetText()
+            rowstart = self.GetGridCursorRow()
+            colstart = self.GetGridCursorCol()
+            for y, r in enumerate(data.splitlines()):
+                # Convert c in a array of text separated by tab
+                row = rowstart + y
+                for x, c in enumerate(r.split('\t')):
+                    self.SetCellValue(row, colstart + x, c)
+                bbg_sec_id = self.GetCellValue(row,0)
+                bid_price = float(self.GetCellValue(row, self.columnList.index('BID')))
+                ask_price = float(self.GetCellValue(row, self.columnList.index('ASK')))
+                try:
+                    bid_size = int(self.GetCellValue(row, self.columnList.index('BID_S')).replace(',',''))
+                    ask_size = int(self.GetCellValue(row, self.columnList.index('ASK_S')).replace(',',''))
+                except:
+                    bid_size = 0
+                    ask_size = 0
+                wx.CallAfter(self.dataSentWarning,row)
+                self.pricer.table.send_price(bbg_sec_id, bid_price, ask_price, bid_size*1000, ask_size*1000)
+
+    # def showPopUpMenuOld(self, event):
+    #     """
+    #     Create and display a popup menu on right-click event. Function is called by __init__() when user 
+    #     right clicks on a grid.
+
+    #     ---------------------
+    #     Back to PricingGrid
+    #     Back to RunsGrid
+    #     Back to PricerWindow
+    #     ---------------------       
+    #     """
+    #     menu = wx.Menu()
+    #     self.clickedBond = self.GetCellValue(event.GetRow(), self.columnList.index('BOND'))
+    #     self.clickedISIN = self.bdm.df.at[self.clickedBond, 'ISIN']
+    #     showAllqItem = wx.MenuItem(menu, self.showAllqID, "ALLQ")
+    #     menu.AppendItem(showAllqItem)
+    #     showTradeHistoryItem = wx.MenuItem(menu, self.showTradeHistoryID, "Trade history")
+    #     menu.AppendItem(showTradeHistoryItem)
+    #     showDESItem = wx.MenuItem(menu, self.showDESID, "DES")
+    #     menu.AppendItem(showDESItem)
+    #     showCNItem = wx.MenuItem(menu, self.showCNID, "CN")
+    #     menu.AppendItem(showCNItem)
+    #     showGPItem = wx.MenuItem(menu, self.showGPID, "GP")
+    #     menu.AppendItem(showGPItem)
+    #     menu.AppendSeparator()
+    #     copyLineItem = wx.MenuItem(menu, self.copyLineID, "Copy line")
+    #     menu.AppendItem(copyLineItem)
+    #     copyISINItem = wx.MenuItem(menu, self.copyISINID, "Copy ISIN")
+    #     menu.AppendItem(copyISINItem)
+    #     pastePricesItem = wx.MenuItem(menu, self.pastePricesID, "Paste prices")
+    #     menu.AppendItem(pastePricesItem)
+    #     self.PopupMenu(menu)
+    #     self.Bind(wx.EVT_MENU, self.showALLQ, showAllqItem)
+    #     self.Bind(wx.EVT_MENU, self.showTradeHistory, showTradeHistoryItem)
+    #     self.Bind(wx.EVT_MENU, self.showDES, showDESItem)
+    #     self.Bind(wx.EVT_MENU, self.showCN, showCNItem)
+    #     self.Bind(wx.EVT_MENU, self.showGP, showGPItem)
+    #     self.Bind(wx.EVT_MENU, self.copyLine, copyLineItem)
+    #     self.Bind(wx.EVT_MENU, self.copyISIN, copyISINItem)
+    #     self.Bind(wx.EVT_MENU, self.onPastePrices, pastePricesItem)
+    #     menu.Destroy()
+
+    def showPopUpMenu(self, event, fromWindowsMenu=False):
         """
         Create and display a popup menu on right-click event. Function is called by __init__() when user 
         right clicks on a grid.
@@ -626,7 +731,8 @@ class PricingGrid(gridlib.Grid):
         ---------------------       
         """
         menu = wx.Menu()
-        self.clickedBond = self.GetCellValue(event.GetRow(), self.columnList.index('BOND'))
+        if not fromWindowsMenu:
+            self.clickedBond = self.GetCellValue(event.GetRow(), self.columnList.index('BOND'))
         self.clickedISIN = self.bdm.df.at[self.clickedBond, 'ISIN']
         showAllqItem = wx.MenuItem(menu, self.showAllqID, "ALLQ")
         menu.AppendItem(showAllqItem)
@@ -638,18 +744,23 @@ class PricingGrid(gridlib.Grid):
         menu.AppendItem(showCNItem)
         showGPItem = wx.MenuItem(menu, self.showGPID, "GP")
         menu.AppendItem(showGPItem)
+        menu.AppendSeparator()
+        buyRegsItem = wx.MenuItem(menu, self.buyRegsID, "Buy REGS")
+        menu.AppendItem(buyRegsItem)
+        sellRegsItem = wx.MenuItem(menu, self.sellRegsID, "Sell REGS")
+        menu.AppendItem(sellRegsItem)
+        buy144AItem = wx.MenuItem(menu, self.buy144AID, "Buy 144A")
+        menu.AppendItem(buy144AItem)
+        sell144AItem = wx.MenuItem(menu, self.sell144AID, "Sell 144A")
+        menu.AppendItem(sell144AItem)
+        menu.AppendSeparator()
         copyLineItem = wx.MenuItem(menu, self.copyLineID, "Copy line")
         menu.AppendItem(copyLineItem)
         copyISINItem = wx.MenuItem(menu, self.copyISINID, "Copy ISIN")
         menu.AppendItem(copyISINItem)
+        pastePricesItem = wx.MenuItem(menu, self.pastePricesID, "Paste prices")
+        menu.AppendItem(pastePricesItem)
         self.PopupMenu(menu)
-        self.Bind(wx.EVT_MENU, self.showALLQ, showAllqItem)
-        self.Bind(wx.EVT_MENU, self.showTradeHistory, showTradeHistoryItem)
-        self.Bind(wx.EVT_MENU, self.showDES, showDESItem)
-        self.Bind(wx.EVT_MENU, self.showCN, showCNItem)
-        self.Bind(wx.EVT_MENU, self.showGP, showGPItem)
-        self.Bind(wx.EVT_MENU, self.copyLine, copyLineItem)
-        self.Bind(wx.EVT_MENU, self.copyISIN, copyISINItem)
         menu.Destroy()
 
     def showTradeHistory(self, event):
@@ -699,12 +810,41 @@ class PricingGrid(gridlib.Grid):
         """
         self.bbgScreenSendKeys(self.clickedISIN, 'ALLQ')
 
+    def buyRegs(self, event):
+        """Shows the ALLQ on Bloomberg. Function is called when user right clicks on a grid 
+        and selects 'ALLQ'. Function will call bbgScreenSendKeys() to send shell command to Bloomberg.
+        """
+        self.bbgScreenSendKeys(self.clickedISIN, 'B')
+
+    def sellRegs(self, event):
+        """Shows the ALLQ on Bloomberg. Function is called when user right clicks on a grid 
+        and selects 'ALLQ'. Function will call bbgScreenSendKeys() to send shell command to Bloomberg.
+        """
+        self.bbgScreenSendKeys(self.clickedISIN, 'S')
+
+    def buy144A(self, event):
+        """Shows the ALLQ on Bloomberg. Function is called when user right clicks on a grid 
+        and selects 'ALLQ'. Function will call bbgScreenSendKeys() to send shell command to Bloomberg.
+        """
+        self.bbgScreenSendKeys(bonds.loc[regsToBondName[self.clickedISIN],'144A'], 'B')
+
+    def sell144A(self, event):
+        """Shows the ALLQ on Bloomberg. Function is called when user right clicks on a grid 
+        and selects 'ALLQ'. Function will call bbgScreenSendKeys() to send shell command to Bloomberg.
+        """
+        self.bbgScreenSendKeys(bonds.loc[regsToBondName[self.clickedISIN],'144A'], 'S')
+
+
     def bbgScreenSendKeys(self, isin, strCommand):
         """Sends command to bloomberg. Function is called by showDES(), showCN(), showGP(), and showALLQ()
         """
         shell = win32com.client.Dispatch("WScript.Shell")
         shell.AppActivate('1-BLOOMBERG')
-        shell.SendKeys(isin + '{F3}' + strCommand + '{ENTER}')
+        try:
+            shell.SendKeys(isin + '{F3}' + strCommand + '{ENTER}')
+        except:
+            print 'Failed to send command to Bloomberg'
+
 
     def updateBenchmarks(self):
         """updates benchmarks. Function calls singleBenchmarkUpdate() to update
