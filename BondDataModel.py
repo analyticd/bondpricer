@@ -131,8 +131,8 @@ class BondDataModel():
         self.df['POSITION'] = 0
         pub.subscribe(self.updatePositions, "POSITION_UPDATE")
         self.bondList = []
-        self.bbgPriceQuery = ['BID', 'ASK', 'YLD_YTM_BID', 'YLD_YTM_ASK', 'Z_SPRD_BID', 'Z_SPRD_ASK','RSI_14D', 'BID_SIZE', 'ASK_SIZE']
-        self.bbgPriceSpecialQuery = ['BID', 'ASK', 'YLD_YTM_BID', 'YLD_YTM_ASK', 'OAS_SPREAD_BID', 'OAS_SPREAD_ASK','RSI_14D', 'BID_SIZE', 'ASK_SIZE']
+        self.bbgPriceQuery = ['BID', 'ASK', 'YLD_CNV_BID', 'YLD_CNV_ASK', 'Z_SPRD_BID', 'Z_SPRD_ASK','RSI_14D', 'BID_SIZE', 'ASK_SIZE']
+        self.bbgPriceSpecialQuery = ['BID', 'ASK', 'YLD_CNV_BID', 'YLD_CNV_ASK', 'OAS_SPREAD_BID', 'OAS_SPREAD_ASK','RSI_14D', 'BID_SIZE', 'ASK_SIZE']
         pass
 
     def reduceUniverse(self):
@@ -245,11 +245,6 @@ class BondDataModel():
         self.populateRiskFreeRates(currencyList,'INTSWAP','SAVG')
 
         emptyLines = list(self.df.index) if priorityBondList == [] else priorityBondList
-        # if priorityBondList == []:
-        #     emptyLines = list(self.df.index)
-        # else:
-        #     emptyLines = priorityBondList
-
         isins = self.df.loc[emptyLines, 'ISIN'] + BBGHand + ' Corp'
         isins = list(isins.astype(str))
         blpts = blpapiwrapper.BLPTS(isins, self.bbgPriceQuery)

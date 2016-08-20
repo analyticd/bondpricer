@@ -5,32 +5,10 @@ Written by Alexandre Almosni   alexandre.almosni@gmail.com
 (C) 2015-2016 Alexandre Almosni
 Released under Apache 2.0 license. More info at http://www.apache.org/licenses/LICENSE-2.0
 
-
-Traders will have an additional tab called 'Runs' which allows them to send Price/ Yield/ ISpread updates 
-of bonds to their Bloomberg email address.
- 
-The pricer window currently displays the following analytics (all analytics downloaded from bloomberg):
-    1) Bond's ISIN and Name,
-    2) Bid/Ask Px, Bid/Ask yield, Bid/Ask Z-Spread 
-    3) Difference in price, yield, and ISpread over past 1 day, 1 week, and 1 month
-    4) Benchmarks is any 
-    5) Position 
-    6) Accrued interest/ Days to coupon/ Bond ratings from SNP, Moody's, and Fitch 
-    7) Coupon rate, Maturity date, and Size
-     
-The pricer window has 3 buttons:
-    1) Refresh Front Data
-    2) Refresh swap rates to recalculate ISpread analytics
-    3) Restart Bloomberg connection
-
-**Steps to add new columns in pricer menu:
-    Step 1: Add new columns in PricerMenu.__init__ > defaultColumnList
-    Step 2: Add column attributes in PricingGrid.__init__ (see lines 368-396)
-    Step 3: Add columns to PricingGrid.createField
-
 **Steps to disable tabs for debugging:
-    In PricerMenu.__init__, comment line 686 and uncomment line 687 to load only bonds in the Africa tab. This 
-    will reduce the amount of bonds loaded from 600++ to 60 to shorten the loading time.
+    In PricerMenu.__init__, look for #grid_labels = ['Africa']# used for testing
+    and uncomment - this will reduce the number of bonds loaded for testing
+
 
 Classes:
     PricingGrid
@@ -57,12 +35,8 @@ import inforalgopanel
 #warnings.filterwarnings('error', category=UnicodeWarning)
 #warnings.filterwarnings('error', message='*equal comparison failed*')
 
+from wx.lib.pubsub import pub
 
-wxVersion=wx.version()[:3]
-if wxVersion=='2.8':
-    from wx.lib.pubsub import Publisher as pub
-else:
-    from wx.lib.pubsub import pub
 
 from StaticDataImport import bonds, DEFPATH, APPPATH, bondRuns, frontToEmail, SPECIALBONDS, grid_labels, colFormats, runTitleStr, regsToBondName
 from BondDataModel import BondDataModel
@@ -73,7 +47,7 @@ class MessageContainer():
 
 
 
-def send_mail_via_com(text, subject, recipient, a1=False, a2=False):
+def send_mail_via_com(text, subject, recipient, a1=None, a2=None):
     """Function to send email to bloomberg when users click on 'send' in the runs menu.
     Function is called by RunsGrid.sendRun()
 
@@ -92,9 +66,9 @@ def send_mail_via_com(text, subject, recipient, a1=False, a2=False):
     Msg.To = recipient
     Msg.Subject = subject
     Msg.Body = text
-    if a1 != False:
+    if a1 is not None:
         Msg.Attachments.Add(a1)
-    if a2 != False:
+    if a2 is not None:
         Msg.Attachments.Add(a2)
     Msg.Send()
     pass
@@ -451,6 +425,7 @@ class PricingGrid(gridlib.Grid):
         self.Bind(gridlib.EVT_GRID_CELL_RIGHT_CLICK, self.showPopUpMenu)
         self.Bind(gridlib.EVT_GRID_CELL_CHANGE, self.onEditCell)
         self.Bind(wx.EVT_KEY_DOWN, self.onKeyDown)
+        self.Bind(gridlib.EVT_GRID_RANGE_SELECT, self.onSelection)
 
         self.showAllqID = wx.NewId()
         self.showTradeHistoryID = wx.NewId()
@@ -476,6 +451,10 @@ class PricingGrid(gridlib.Grid):
         self.Bind(wx.EVT_MENU, self.copyLine, id=self.copyLineID)
         self.Bind(wx.EVT_MENU, self.copyISIN, id=self.copyISINID)
         self.Bind(wx.EVT_MENU, self.onPastePrices, id=self.pastePricesID)
+        self.selected_row_number = 0
+        self.selected_col_number = 0
+        self.previous_selected_row_number = 0
+        self.previous_selected_col_number = 0
 
 
     def initialPaint(self):
@@ -555,7 +534,53 @@ class PricingGrid(gridlib.Grid):
         event.Skip() # important, otherwise one would need to define all possible events
 
 
+    def onSelection(self, event):
+        #print event.GetEventType()
+        self.previous_selected_row_number = self.selected_row_number
+        self.previous_selected_col_number = self.selected_col_number
+        if self.GetSelectionBlockTopLeft() == []:
+            self.selected_row_number = 0
+            self.selected_col_number = 0
+        else:
+            self.selected_row_number = self.GetSelectionBlockBottomRight()[0][0] - self.GetSelectionBlockTopLeft()[0][0] + 1
+            self.selected_col_number = self.GetSelectionBlockBottomRight()[0][1] - self.GetSelectionBlockTopLeft()[0][1] + 1
+        #print self.selected_row_number, self.selected_col_number
+        #print self.previous_selected_row_number, self.previous_selected_col_number
+
+
+
     def onEditCell(self,event):
+        #print self.previous_selected_row_number, self.previous_selected_col_number
+        if self.previous_selected_row_number == 0 and self.previous_selected_col_number == 0:
+            self.onEditSingleCell(event)
+        else:
+            #print 'Multiple selection detected'
+            rowstart = event.GetRow()
+            col = event.GetCol()
+            colID = self.GetColLabelValue(col)
+            #print colID
+            strNewValue = self.GetCellValue(rowstart,col)
+            self.onEditSingleCell(event)
+            if self.previous_selected_col_number == 1 and colID == 'BID':
+                #print rowstart
+                for r in range(self.previous_selected_row_number):
+                    if r==0:
+                        continue#already done above
+                    row = rowstart + r
+                    #print row
+                    bond = self.GetCellValue(row,1)
+                    #print bond
+                    oldValue = float(self.GetCellValue(row,col))
+                    newValue = self.readInput(oldValue,strNewValue)
+                    self.SetCellValue(row,col,'{:,.3f}'.format(newValue))
+                    try:
+                        oldOffer = float(self.GetCellValue(row,col+1))
+                    except:
+                        oldOffer = 0
+                    self.SetCellValue(row,col+1,'{:,.3f}'.format(newValue + oldOffer - oldValue))
+                    self.sendUpdateToInforalgo(row)
+
+    def onEditSingleCell(self,event):
         row = event.GetRow()
         col = event.GetCol()
         bond = self.GetCellValue(row,1)
@@ -576,6 +601,21 @@ class PricingGrid(gridlib.Grid):
             except:
                 oldOffer = 0
             self.SetCellValue(row,col+1,'{:,.3f}'.format(newValue + oldOffer - oldValue))
+        self.sendUpdateToInforalgo(row)
+        # wx.CallAfter(self.dataSentWarning,row)
+        # bbg_sec_id = self.GetCellValue(row,0)
+        # bid_price = float(self.GetCellValue(row, self.columnList.index('BID')))
+        # ask_price = float(self.GetCellValue(row, self.columnList.index('ASK')))
+        # try:
+        #     bid_size = int(self.GetCellValue(row, self.columnList.index('BID_S')).replace(',',''))
+        #     ask_size = int(self.GetCellValue(row, self.columnList.index('ASK_S')).replace(',',''))
+        # except:
+        #     bid_size = 0
+        #     ask_size = 0
+        # self.pricer.table.send_price(bbg_sec_id, bid_price, ask_price, bid_size*1000, ask_size*1000)
+        #print 'Update sent successfully to inforalgo for ' + bond
+
+    def sendUpdateToInforalgo(self,row):
         wx.CallAfter(self.dataSentWarning,row)
         bbg_sec_id = self.GetCellValue(row,0)
         bid_price = float(self.GetCellValue(row, self.columnList.index('BID')))
@@ -587,7 +627,7 @@ class PricingGrid(gridlib.Grid):
             bid_size = 0
             ask_size = 0
         self.pricer.table.send_price(bbg_sec_id, bid_price, ask_price, bid_size*1000, ask_size*1000)
-        #print 'Update sent successfully to inforalgo for ' + bond
+        pass
 
     @staticmethod
     def readInput(oldValue, strNewValue):
