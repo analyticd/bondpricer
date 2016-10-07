@@ -1,5 +1,5 @@
 """
-Pricer Window - Launches the pricer menu.
+Pricer Window - Launches the pricer.
 
 Written by Alexandre Almosni   alexandre.almosni@gmail.com
 (C) 2015-2016 Alexandre Almosni
@@ -8,7 +8,6 @@ Released under Apache 2.0 license. More info at http://www.apache.org/licenses/L
 **Steps to disable tabs for debugging:
     In PricerMenu.__init__, look for #grid_labels = ['Africa']# used for testing
     and uncomment - this will reduce the number of bonds loaded for testing
-
 
 Classes:
     PricingGrid
@@ -29,13 +28,13 @@ import win32com.client
 import time
 import wx.lib.colourdb
 import wx.lib.pubsub
+from wx.lib.pubsub import pub
 #import warnings
-import inforalgo
-import inforalgopanel
 #warnings.filterwarnings('error', category=UnicodeWarning)
 #warnings.filterwarnings('error', message='*equal comparison failed*')
-
-from wx.lib.pubsub import pub
+import inforalgo
+import inforalgopanel
+from subprocess import Popen
 
 
 from StaticDataImport import bonds, DEFPATH, APPPATH, bondRuns, frontToEmail, SPECIALBONDS, grid_labels, colFormats, runTitleStr, regsToBondName
@@ -44,7 +43,6 @@ from BondDataModel import BondDataModel
 class MessageContainer():
     def __init__(self,data):
         self.data = data
-
 
 
 def send_mail_via_com(text, subject, recipient, a1=None, a2=None):
@@ -72,6 +70,18 @@ def send_mail_via_com(text, subject, recipient, a1=None, a2=None):
         Msg.Attachments.Add(a2)
     Msg.Send()
     pass
+
+
+class TextDisplayWindow(wx.Frame):
+    def __init__(self, title, filename):
+        wx.Frame.__init__(self, None, wx.ID_ANY, title, size=(800, 600))
+        panel = wx.Panel(self) 
+        multiText = wx.TextCtrl(panel, -1,"",size=(775, 575), style=wx.TE_MULTILINE|wx.TE_READONLY)#775 and 575 to leave space for the scrollbar
+        f = open(APPPATH+filename, 'r') 
+        multiText.SetValue(f.read())  #open the file from location as read
+        f.close()
+        multiText.SetFont(wx.Font(multiText.GetFont().GetPointSize(), wx.TELETYPE, wx.NORMAL, wx.NORMAL))
+        self.Show()
 
 
 class RunsGrid(gridlib.Grid):
@@ -398,6 +408,8 @@ class PricingGrid(gridlib.Grid):
         self.columnList = columnList
         self.bondsWithBenchmark = list(self.tab[self.tab['Benchmarks'].notnull()]['Bonds'])
 
+        self.bondToBenchmark = self.tab.loc[self.tab['Benchmarks'].notnull(),['Bonds','Benchmarks']].set_index('Bonds')['Benchmarks'].to_dict()
+
         self.bdm = bdm
         self.pricer = pricer
         self.CreateGrid(len(self.bondList), len(self.columnList))
@@ -486,8 +498,9 @@ class PricingGrid(gridlib.Grid):
                     if i % 2:
                         self.SetRowAttr(i,self.oddlineattr.Clone())#this clone thing is needed in wxPython 3.0 (worked fine without in 2.8)
                     if header in self.bdm.df.columns:
+                        value = self.bdm.df.at[bond, header]
                         if header == 'POSITION':
-                            value = self.bdm.df.at[bond, header]
+                            #value = self.bdm.df.at[bond, header]
                             if self.bdm.mainframe is None or self.bdm.mainframe.isTrader:
                                 value = '{:,.0f}'.format(value)
                             else:
@@ -497,8 +510,10 @@ class PricingGrid(gridlib.Grid):
                                     value = '<-1MM'
                                 else:
                                     value = '{:,.0f}'.format(value)
+                        elif header == 'SIZE':
+                            value = '{:,.0f}'.format(float(value) / 1000000) + 'm'
                         else:
-                            value = str(self.bdm.df.at[bond, header])
+                            value = str(value)
                         self.SetCellValue(i, j, value)
                         if header == 'D2CPN' and self.bdm.df.at[bond, header] <= self.daysToCouponWarning:
                             self.SetCellBackgroundColour(i, j, wx.RED)
@@ -627,6 +642,10 @@ class PricingGrid(gridlib.Grid):
             bid_size = 0
             ask_size = 0
         self.pricer.table.send_price(bbg_sec_id, bid_price, ask_price, bid_size*1000, ask_size*1000)
+        pass
+
+    def basisPointShift(self,bond,oldValue,strNewValue):
+        delta = float(strNewValue[:-1])
         pass
 
     @staticmethod
@@ -805,8 +824,7 @@ class PricingGrid(gridlib.Grid):
 
     def showTradeHistory(self, event):
         """
-        Shows the TradeHistory. Function is called when user right clicks on a grid and selects 
-        'Trade History'. 
+        Shows the TradeHistory.
         """
         self.bdm.mainframe.onBondQuerySub(self.clickedBond)
         wx.CallAfter(self.bdm.mainframe.Raise)
@@ -814,69 +832,43 @@ class PricingGrid(gridlib.Grid):
 
     def copyLine(self, event):
         """
-        Copies the selected line. Function is called when user right clicks on a grid and selects 'Copy line'
+        Copies the selected line to the clipboard.
         """
         self.bdm.df.loc[self.clickedBond].to_clipboard()
 
     def copyISIN(self, event):
-        """Copies the ISIN of the selected bond. Function is called when user clicks on a grid and selects 
-        'Copy ISIN'
+        """Copies the ISIN of the selected bond to the clipboard.
         """
         if wx.TheClipboard.Open():
             wx.TheClipboard.SetData(wx.TextDataObject(self.clickedISIN))
             wx.TheClipboard.Close()
 
     def showDES(self, event):
-        """Shows the description on Bloomberg. Function is called when user right clicks on a grid 
-        and selects 'DES'. Function will call bbgScreenSendKeys() to send shell command to Bloomberg.
-        """
         self.bbgScreenSendKeys(self.clickedISIN, 'DES')
 
     def showCN(self, event):
-        """Shows the company news on Bloomberg. Function is called when user right clicks on a grid 
-        and selects 'CN'. Function will call bbgScreenSendKeys() to send shell command to Bloomberg.
-        """
         self.bbgScreenSendKeys(self.clickedISIN, 'CN')
 
     def showGP(self, event):
-        """Shows the price graph on Bloomberg. Function is called when user right clicks on a grid 
-        and selects 'GP'. Function will call bbgScreenSendKeys() to send shell command to Bloomberg.
-        """
         self.bbgScreenSendKeys(self.clickedISIN, 'GP')
 
     def showALLQ(self, event):
-        """Shows the ALLQ on Bloomberg. Function is called when user right clicks on a grid 
-        and selects 'ALLQ'. Function will call bbgScreenSendKeys() to send shell command to Bloomberg.
-        """
         self.bbgScreenSendKeys(self.clickedISIN, 'ALLQ')
 
     def buyRegs(self, event):
-        """Shows the ALLQ on Bloomberg. Function is called when user right clicks on a grid 
-        and selects 'ALLQ'. Function will call bbgScreenSendKeys() to send shell command to Bloomberg.
-        """
         self.bbgScreenSendKeys(self.clickedISIN, 'B')
 
     def sellRegs(self, event):
-        """Shows the ALLQ on Bloomberg. Function is called when user right clicks on a grid 
-        and selects 'ALLQ'. Function will call bbgScreenSendKeys() to send shell command to Bloomberg.
-        """
         self.bbgScreenSendKeys(self.clickedISIN, 'S')
 
     def buy144A(self, event):
-        """Shows the ALLQ on Bloomberg. Function is called when user right clicks on a grid 
-        and selects 'ALLQ'. Function will call bbgScreenSendKeys() to send shell command to Bloomberg.
-        """
         self.bbgScreenSendKeys(bonds.loc[regsToBondName[self.clickedISIN],'144A'], 'B')
 
     def sell144A(self, event):
-        """Shows the ALLQ on Bloomberg. Function is called when user right clicks on a grid 
-        and selects 'ALLQ'. Function will call bbgScreenSendKeys() to send shell command to Bloomberg.
-        """
         self.bbgScreenSendKeys(bonds.loc[regsToBondName[self.clickedISIN],'144A'], 'S')
 
-
     def bbgScreenSendKeys(self, isin, strCommand):
-        """Sends command to bloomberg. Function is called by showDES(), showCN(), showGP(), and showALLQ()
+        """Sends command to Bloomberg.
         """
         shell = win32com.client.Dispatch("WScript.Shell")
         shell.AppActivate('1-BLOOMBERG')
@@ -885,22 +877,27 @@ class PricingGrid(gridlib.Grid):
         except:
             print 'Failed to send command to Bloomberg'
 
+    def updateOneBenchmark(self, bond):
+        """Checks if bond behchmarked or benchmarker
+        """
+        for b, bc in self.bondToBenchmark.iteritems():
+            if bond == bc or bond == b:
+                self.singleBenchmarkUpdate(b)
 
     def updateBenchmarks(self):
-        """updates benchmarks. Function calls singleBenchmarkUpdate() to update
-        the benchmark of each bonds in self.bondsWithBenchmark
+        """Called by the bond data model on first pass
         """
-        print 'First benchmark update pass'
         for bond in self.bondsWithBenchmark:
             self.singleBenchmarkUpdate(bond)
 
     def singleBenchmarkUpdate(self, bond):
-        """Updates single benchmark. Function is called by updateBenchmarks().
+        """Updates single benchmark.
         """
         i = self.bondList.index(bond)
         j = self.columnList.index('BENCHMARK')
         try:
-            bench = self.tab[self.tab['Bonds'] == bond]['Benchmarks'].iloc[0]
+            #bench = self.tab[self.tab['Bonds'] == bond]['Benchmarks'].iloc[0]
+            bench = self.bondToBenchmark[bond]
             value = self.bdm.df.at[bond, 'ZB'] - self.bdm.df.at[bench, 'ZB']
             self.SetCellBackgroundColour(i, j, wx.RED)
             self.SetCellValue(i, j, '{:,.0f}'.format(value) + ' vs ' + bench)
@@ -911,20 +908,6 @@ class PricingGrid(gridlib.Grid):
         else:
             wx.CallLater(1000, self.SetCellBackgroundColour, i, j, wx.WHITE)
         wx.CallLater(1100, self.ForceRefresh)
-
-    def updateOneBenchmark(self, bond):
-        """Updates bond in the benchmark. Function calls singleBenchmarkUpdate() to update the benchmark 
-        of a bond. 
-        """
-#        try:
-        if bond in list(self.tab['Benchmarks']):#has to be a list
-            dependentBonds = list(self.tab[self.tab['Benchmarks'] == bond]['Bonds'])
-            for bond in dependentBonds:
-                self.singleBenchmarkUpdate(bond)
-        if bond in self.bondsWithBenchmark:
-            self.singleBenchmarkUpdate(bond)
-#        except UnicodeWarning:
-#            print 'Warning with ' + bond
 
     def updatePositions(self, message=None):
         """Holding function that listens to the POSITION_UPDATE event and calls updateAllPositions() after
@@ -1085,7 +1068,9 @@ class PricerWindow(wx.Frame):
 
         defaultColumnList = ['ISIN', 'BOND','BID', 'ASK', 'BID_S','ASK_S', 'YIELD', 'Z-SPREAD', 'DP(1D/1W/1M)','DZ(1D/1W/1M)',
                              'BENCHMARK', 'RSI14', 'POSITION', 'ACCRUED', 'D2CPN', 'S / M / F', 'COUPON', 'MATURITY', 'SIZE']#removed columns: 'DY(1D/1W/1M)'
+        ####DEBUG MODE######
         #grid_labels = ['Africa']# used for testing
+        ####END DEBUG MODE######
         for label in grid_labels:#
             csv = pandas.read_csv(DEFPATH+label+'Tab.csv')
             csv['Bonds'].fillna('',inplace=True)
@@ -1120,34 +1105,43 @@ class PricerWindow(wx.Frame):
 
         # ##MAIN WINDOW LAYOUT
         sizer = wx.BoxSizer(wx.VERTICAL)
-        if self.mainframe is not None:#Create buttonsPanel Sizer
-            buttonsPanel = wx.Panel(self.panel)
-            sizer.Add(buttonsPanel, 0.25, wx.EXPAND, 2)
-            buttonPanelSizer = wx.GridSizer(2,3,0,0)
-            #Create buttons
-            self.frontButton = wx.Button(buttonsPanel, label='Refresh Front Data')
-            self.frontButton.Bind(wx.EVT_BUTTON, self.onRefreshFrontData)
-            self.lastUpdateTime = wx.TextCtrl(buttonsPanel, -1, self.lastUpdateString())
-            ratesButton = wx.Button(buttonsPanel, label='Refresh Rates')
-            ratesButton.Bind(wx.EVT_BUTTON, self.onRefreshSwapRates)
-            self.ratesUpdateTime = wx.TextCtrl(buttonsPanel, -1, 'Starting...')
-            bloomButton = wx.Button(buttonsPanel, label="Restart Bloomberg connection")
-            bloomButton.Bind(wx.EVT_BUTTON, self.onRestartBloombergConnection)
-            self.bloomUpdateTime = wx.TextCtrl(buttonsPanel, -1, 'Starting...')
-            
-            # if not mainframe.isTrader:
-            #     frontButton.Enable(False)
-            #Add buttons and textfield to sizer
-            buttonPanelSizer.AddMany([
-                (self.frontButton,1,wx.EXPAND,2),
-                (ratesButton,1,wx.EXPAND,2),
-                (bloomButton,1,wx.EXPAND,2),
-                (self.lastUpdateTime,1,wx.EXPAND,2),
-                (self.ratesUpdateTime,1,wx.EXPAND,2),
-                (self.bloomUpdateTime,1,wx.EXPAND,2)
-                ])
+        buttonsPanel = wx.Panel(self.panel)
+        sizer.Add(buttonsPanel, 0.25, wx.EXPAND, 2)
+        buttonPanelSizer = wx.GridSizer(2,6,0,0)
+        #Create buttons
+        self.frontButton = wx.Button(buttonsPanel, label='Refresh Front data')
+        self.frontButton.Bind(wx.EVT_BUTTON, self.onRefreshFrontData)
+        self.lastUpdateTime = wx.TextCtrl(buttonsPanel, -1, self.lastUpdateString())
+        ratesButton = wx.Button(buttonsPanel, label='Refresh Rates')
+        ratesButton.Bind(wx.EVT_BUTTON, self.onRefreshSwapRates)
+        self.ratesUpdateTime = wx.TextCtrl(buttonsPanel, -1, 'Starting...')
+        bloomButton = wx.Button(buttonsPanel, label="Restart Bloomberg connection")
+        bloomButton.Bind(wx.EVT_BUTTON, self.onRestartBloombergConnection)
+        self.bloomUpdateTime = wx.TextCtrl(buttonsPanel, -1, 'Starting...')
+        editTabButton = wx.Button(buttonsPanel, label='Edit current tab')
+        editTabButton.Bind(wx.EVT_BUTTON, self.onEditTab)
+        tipButton = wx.Button(buttonsPanel, label='Tips')
+        tipButton.Bind(wx.EVT_BUTTON, self.onTips)
+        aboutButton = wx.Button(buttonsPanel, label='Pricer guide')
+        aboutButton.Bind(wx.EVT_BUTTON, self.onAbout)
+        if mainframe is None:
+            self.frontButton.Enable(False)
+        else:
+            if not mainframe.isTrader:
+                self.frontButton.Enable(False)
+        buttonPanelSizer.AddMany([
+            (self.frontButton,1,wx.EXPAND,2),
+            (ratesButton,1,wx.EXPAND,2),
+            (bloomButton,1,wx.EXPAND,2),
+            (editTabButton,1,wx.EXPAND,2),
+            (tipButton,1,wx.EXPAND,2),
+            (aboutButton,1,wx.EXPAND,2),
+            (self.lastUpdateTime,1,wx.EXPAND,2),
+            (self.ratesUpdateTime,1,wx.EXPAND,2),
+            (self.bloomUpdateTime,1,wx.EXPAND,2)
+            ])
 
-            buttonsPanel.SetSizer(buttonPanelSizer)
+        buttonsPanel.SetSizer(buttonPanelSizer)
             
         sizer.Add(notebookPanel, 1, wx.EXPAND, 5)
         notebookPanelSizer = wx.BoxSizer(wx.VERTICAL)
@@ -1162,17 +1156,28 @@ class PricerWindow(wx.Frame):
             wx.CallAfter(grid.initialPaint)
         
         priorityBondList = []
-        #old_style = topframe.GetWindowStyle()
-        #topframe.SetWindowStyle(old_style | wx.STAY_ON_TOP)
         busyDlg = wx.BusyInfo('Downloading analytics for ' + str(number_of_bonds) + ' bonds...', parent=topframe)
         self.bdm.firstPass(priorityBondList)
-        if self.mainframe is not None:
-            self.ratesUpdateTime.SetValue(self.lastSwapRefreshTime())
+        self.ratesUpdateTime.SetValue(self.lastSwapRefreshTime())
         busyDlg = None 
-        #topframe.SetWindowStyle(old_style)
         self.bdm.startUpdates()
         pub.sendMessage('BDM_READY', message = MessageContainer(self.bdm))
         ############################################
+
+    def onAbout(self, event):
+        TextDisplayWindow("Pricer Guide",'documentation//PricerGuide.txt')
+
+    def onTips(self,event):
+        TextDisplayWindow("Usage tips",'documentation//PricerInputTips.txt')
+
+    def onEditTab(self,event):
+        tabName = self.notebook.GetPageText(self.notebook.GetSelection())
+        if tabName != 'Inforalgo':
+            if tabName == 'Runs':
+                filename = DEFPATH + 'runs.csv'
+            else:
+                filename = DEFPATH + tabName + 'Tab.csv'
+            Popen(filename, shell = True)
 
     def onClose(self, event):
         '''
@@ -1194,10 +1199,13 @@ class PricerWindow(wx.Frame):
         '''
         Sets the value for last Front Data update
         '''
-        if self.mainframe.th.df['Date'].iloc[-1] != datetime.datetime.today().strftime('%d/%m/%y'):
-            return 'Last updated on ' + self.mainframe.th.df['Date'].iloc[-1] + '.'
-        else:
-            return 'Last updated today at ' + datetime.datetime.now().strftime('%H:%M') + '.'
+        try:
+            if self.mainframe.th.df['Date'].iloc[-1] != datetime.datetime.today().strftime('%d/%m/%y'):
+                return 'Last updated on ' + self.mainframe.th.df['Date'].iloc[-1] + '.'
+            else:
+                return 'Last updated today at ' + datetime.datetime.now().strftime('%H:%M') + '.'
+        except:
+            return 'N/A'
 
     def onRefreshFrontData(self, event):
         '''
@@ -1235,20 +1243,18 @@ class PricerWindow(wx.Frame):
 
     def lastSwapRefreshTime(self):
         '''
-        Calls the lastRefreshTime attribute of SwapHistory.SwapHistory to and print the time when the swap was last 
-        downlaoded from bloomberg.
+        Calls the lastRefreshTime attribute of SwapHistory.SwapHistory to print the time when the swap was last 
+        downlaoded from Bloomberg.
         '''
         return 'Last refreshed at: ' + self.bdm.USDswapRate.lastRefreshTime.strftime('%H:%M:%S') + '.' 
 
     def updateTime(self, message=None):
         """Function to update time whenever there's a BOND_PRICE_UPDATE event.
         """
-        if self.mainframe is not None:
-            self.bloomUpdateTime.SetValue('Last updated today at ' + datetime.datetime.now().strftime('%H:%M') + '.')
+        self.bloomUpdateTime.SetValue('Last updated today at ' + datetime.datetime.now().strftime('%H:%M') + '.')
 
 
 if __name__ == "__main__":
-    #app = wx.PySimpleApp()
     app = wx.App()
     frame = PricerWindow().Show()
     app.MainLoop()

@@ -109,7 +109,7 @@ class BondDataModel():
         colsAccrued = ['ACCRUED', 'D2CPN']
         # these columns will feed from Bloomberg (or Front) and be regenerated all the time
         colsPrice = ['BID', 'ASK', 'MID', 'BID_SIZE', 'ASK_SIZE']#ADD LAST_UPDATE
-        colsAnalytics = ['YLDB', 'YLDA', 'YLDM', 'ZB', 'ZA', 'ZM','INTSWAP','ISP','RSI14']
+        colsAnalytics = ['YLDB', 'YLDA', 'YLDM', 'ZB', 'ZA', 'ZM','INTSWAP','ISP','RSI14','RISK_MID']
         colsChanges = ['DP1FRT', 'DP1D', 'DP1W', 'DP1M', 'DY1D', 'DY1W', 'DY1M','DISP1D','DISP1W','DISP1M']
         colsPosition = ['POSITION']
         self.colsAll = colsDescription + colsPriceHistory + colsRating + colsAccrued + colsPrice + colsAnalytics + colsChanges + colsPosition  # +colsPricingHierarchy+colsUpdate
@@ -124,7 +124,7 @@ class BondDataModel():
         for c in list(set(colsDescription) & set(bonds.columns)):
             self.df[c] = bonds[c]
         self.df.rename(columns={'AMT_OUTSTANDING': 'SIZE'}, inplace=True)
-        self.df['SIZE'] = self.df['SIZE'].apply(lambda x: '{:,.0f}'.format(float(x) / 1000000) + 'm')
+        #self.df['SIZE'] = self.df['SIZE'].apply(lambda x: '{:,.0f}'.format(float(x) / 1000000) + 'm')
         self.df['MATURITYDT'] = self.df['MATURITY'].apply(getMaturityDate)
         self.df = self.df[self.df['MATURITYDT'] >= self.dtToday]
         self.df['MATURITY'] = self.df['MATURITYDT'].apply(lambda x: x.strftime('%d/%m/%y'))
@@ -300,7 +300,7 @@ class BondDataModel():
             isins = list(isins.astype(str))
 
             rtgaccBLP = blpapiwrapper.BLPTS(isins,
-                                            ['RTG_SP', 'RTG_MOODY', 'RTG_FITCH', 'INT_ACC', 'DAYS_TO_NEXT_COUPON','YRS_TO_SHORTEST_AVG_LIFE']) # add average life
+                                            ['RTG_SP', 'RTG_MOODY', 'RTG_FITCH', 'INT_ACC', 'DAYS_TO_NEXT_COUPON','YRS_TO_SHORTEST_AVG_LIFE','RISK_MID','PRINCIPAL_FACTOR','AMT_OUTSTANDING'])
             rtgaccStream = StreamWatcher(self,'RTGACC')
             rtgaccBLP.register(rtgaccStream)
             rtgaccBLP.get()
@@ -343,7 +343,7 @@ class BondDataModel():
             self.df['ISP1W'] = (self.df['Y1W']-self.df['INTSWAP1W'])*100
             self.df['ISP1M'] = (self.df['Y1M']-self.df['INTSWAP1M'])*100
 
-            self.df[['SNP', 'MDY', 'FTC', 'P1D', 'P1W', 'P1M', 'Y1D', 'Y1W', 'Y1M', 'ACCRUED', 'D2CPN','SAVG','ISP1D','ISP1W','ISP1M']].to_csv(savepath)
+            self.df[['SNP', 'MDY', 'FTC', 'P1D', 'P1W', 'P1M', 'Y1D', 'Y1W', 'Y1M', 'ACCRUED', 'D2CPN','SAVG','ISP1D','ISP1W','ISP1M','RISK_MID','PRINCIPAL_FACTOR','SIZE']].to_csv(savepath)
             self.df['ACCRUED'] = self.df['ACCRUED'].apply(lambda x: '{:,.2f}'.format(float(x)))
             self.df['D2CPN'].fillna(-1, inplace=True)
             self.df['D2CPN'] = self.df['D2CPN'].astype(int)
@@ -355,6 +355,10 @@ class BondDataModel():
             print 'Found existing file from today'
             df = pandas.read_csv(savepath, index_col=0)
             self.df[['SNP', 'MDY', 'FTC', 'P1D', 'P1W', 'P1M', 'Y1D', 'Y1W', 'Y1M', 'ACCRUED', 'D2CPN','SAVG','ISP1D','ISP1W','ISP1M']] = df[['SNP', 'MDY', 'FTC', 'P1D', 'P1W', 'P1M', 'Y1D', 'Y1W', 'Y1M', 'ACCRUED', 'D2CPN','SAVG','ISP1D','ISP1W','ISP1M']]
+            try:
+                self.df[['RISK_MID','PRINCIPAL_FACTOR','SIZE']] = df[['RISK_MID','PRINCIPAL_FACTOR','SIZE']]
+            except:
+                pass
             self.df[['SNP', 'MDY', 'FTC']] = self.df[['SNP', 'MDY', 'FTC']].astype(str)
             self.df['ACCRUED'].fillna(-1,inplace=True)#HACK SO NEXT LINE DOESN'T BLOW UP - WE DON'T WANT TO PUT 0 THERE!
             self.df['ACCRUED'] = self.df['ACCRUED'].astype(float)
