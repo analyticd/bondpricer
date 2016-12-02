@@ -299,12 +299,22 @@ class BondDataModel():
             isins = self.df['ISIN'] + BBGHand + ' Corp'
             isins = list(isins.astype(str))
 
-            rtgaccBLP = blpapiwrapper.BLPTS(isins,
-                                            ['RTG_SP', 'RTG_MOODY', 'RTG_FITCH', 'INT_ACC', 'DAYS_TO_NEXT_COUPON','YRS_TO_SHORTEST_AVG_LIFE','RISK_MID','PRINCIPAL_FACTOR','AMT_OUTSTANDING'])
-            rtgaccStream = StreamWatcher(self,'RTGACC')
-            rtgaccBLP.register(rtgaccStream)
-            rtgaccBLP.get()
-            rtgaccBLP.closeSession()
+            #rtgaccBLP = blpapiwrapper.BLPTS(isins,
+            #                                ['RTG_SP', 'RTG_MOODY', 'RTG_FITCH', 'INT_ACC', 'DAYS_TO_NEXT_COUPON','YRS_TO_SHORTEST_AVG_LIFE','RISK_MID','PRINCIPAL_FACTOR','AMT_OUTSTANDING'])
+            #rtgaccStream = StreamWatcher(self,'RTGACC')
+            #rtgaccBLP.register(rtgaccStream)
+            #rtgaccBLP.get()
+            #rtgaccBLP.closeSession()
+
+            ##
+            flds = ['RTG_SP', 'RTG_MOODY', 'RTG_FITCH', 'INT_ACC', 'DAYS_TO_NEXT_COUPON','YRS_TO_SHORTEST_AVG_LIFE','RISK_MID','PRINCIPAL_FACTOR','AMT_OUTSTANDING']
+            out = blpapiwrapper.simpleReferenceDataRequest(pandas.Series((self.df['ISIN'] + ' Corp').values, index=self.df.index).to_dict(),flds)[flds]
+            #loop
+            for f in flds:
+                self.df[bbgToBdmDic[f]] = out[f]
+            self.df['RISK_MID'].fillna(0, inplace=True)
+            ##
+
 
             priceHistory = blpapiwrapper.BLPTS(isins, ['PX_LAST', 'YLD_YTM_MID'], startDate=self.dtLastMonth,endDate=self.dtToday)
             priceHistoryStream = StreamWatcherHistory(self)
@@ -347,6 +357,7 @@ class BondDataModel():
             self.df['ACCRUED'] = self.df['ACCRUED'].apply(lambda x: '{:,.2f}'.format(float(x)))
             self.df['D2CPN'].fillna(-1, inplace=True)
             self.df['D2CPN'] = self.df['D2CPN'].astype(int)
+            self.df[['RISK_MID','PRINCIPAL_FACTOR','SIZE']] = self.df[['RISK_MID','PRINCIPAL_FACTOR','SIZE']].astype(float)
             self.df[['SNP', 'MDY', 'FTC']] = self.df[['SNP', 'MDY', 'FTC']].fillna('NA')  # ,'ACCRUED','D2CPN'
             self.df[['SNP', 'MDY', 'FTC', 'ACCRUED']] = self.df[['SNP', 'MDY', 'FTC', 'ACCRUED']].astype(str)
 
@@ -355,10 +366,7 @@ class BondDataModel():
             print 'Found existing file from today'
             df = pandas.read_csv(savepath, index_col=0)
             self.df[['SNP', 'MDY', 'FTC', 'P1D', 'P1W', 'P1M', 'Y1D', 'Y1W', 'Y1M', 'ACCRUED', 'D2CPN','SAVG','ISP1D','ISP1W','ISP1M']] = df[['SNP', 'MDY', 'FTC', 'P1D', 'P1W', 'P1M', 'Y1D', 'Y1W', 'Y1M', 'ACCRUED', 'D2CPN','SAVG','ISP1D','ISP1W','ISP1M']]
-            try:
-                self.df[['RISK_MID','PRINCIPAL_FACTOR','SIZE']] = df[['RISK_MID','PRINCIPAL_FACTOR','SIZE']]
-            except:
-                pass
+            self.df[['RISK_MID','PRINCIPAL_FACTOR','SIZE']] = df[['RISK_MID','PRINCIPAL_FACTOR','SIZE']].astype(float)
             self.df[['SNP', 'MDY', 'FTC']] = self.df[['SNP', 'MDY', 'FTC']].astype(str)
             self.df['ACCRUED'].fillna(-1,inplace=True)#HACK SO NEXT LINE DOESN'T BLOW UP - WE DON'T WANT TO PUT 0 THERE!
             self.df['ACCRUED'] = self.df['ACCRUED'].astype(float)
@@ -367,7 +375,7 @@ class BondDataModel():
             self.df['D2CPN'] = self.df['D2CPN'].astype(int)          
             self.df[['SAVG','ISP1D','ISP1W','ISP1M']] = self.df[['SAVG','ISP1D','ISP1W','ISP1M']].astype(float)
 
-        pxhist = self.df[['P1D', 'P1W', 'P1M', 'Y1D', 'Y1W', 'Y1M']]
+        #pxhist = self.df[['P1D', 'P1W', 'P1M', 'Y1D', 'Y1W', 'Y1M']]
         #print pxhist[pxhist.isnull().any(axis=1)]
         print 'History fetched in: ' + str(int(time.time() - time_start)) + ' seconds.'
 

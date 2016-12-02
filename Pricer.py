@@ -511,7 +511,7 @@ class PricingGrid(gridlib.Grid):
                                 else:
                                     value = '{:,.0f}'.format(value)
                         elif header == 'SIZE':
-                            value = '{:,.0f}'.format(float(value) / 1000000) + 'm'
+                            value = '{:,.0f}'.format(value / 1000000) + 'm'
                         else:
                             value = str(value)
                         self.SetCellValue(i, j, value)
@@ -544,6 +544,8 @@ class PricingGrid(gridlib.Grid):
         elif keycode == wx.WXK_WINDOWS_MENU:
             self.clickedBond = self.GetCellValue(self.GetGridCursorRow(), self.columnList.index('BOND'))
             self.showPopUpMenu(event, True)
+        elif keycode == 67 and event.ControlDown():
+            self.onCopySelection()
         else:
             pass
         event.Skip() # important, otherwise one would need to define all possible events
@@ -562,6 +564,42 @@ class PricingGrid(gridlib.Grid):
         #print self.selected_row_number, self.selected_col_number
         #print self.previous_selected_row_number, self.previous_selected_col_number
 
+    def onCopySelection(self):
+        # Number of rows and cols
+        #print self.GetSelectionBlockBottomRight()
+        #print self.GetGridCursorRow()
+        #print self.GetGridCursorCol()
+        if self.GetSelectionBlockTopLeft() == []:
+            rows = 1
+            cols = 1
+            iscell = True
+        else:
+            rows = self.GetSelectionBlockBottomRight()[0][0] - self.GetSelectionBlockTopLeft()[0][0] + 1
+            cols = self.GetSelectionBlockBottomRight()[0][1] - self.GetSelectionBlockTopLeft()[0][1] + 1
+            iscell = False
+        # data variable contain text that must be set in the clipboard
+        data = ''
+        # For each cell in selected range append the cell value in the data variable
+        # Tabs '\t' for cols and '\r' for rows
+        for r in range(rows):
+            for c in range(cols):
+                if iscell:
+                    data += str(self.GetCellValue(self.GetGridCursorRow() + r, self.GetGridCursorCol() + c))
+                else:
+                    data += str(self.GetCellValue(self.GetSelectionBlockTopLeft()[0][0] + r, self.GetSelectionBlockTopLeft()[0][1] + c))
+                if c < cols - 1:
+                    data += '\t'
+            data += '\n'
+        # Create text data object
+        clipboard = wx.TextDataObject()
+        # Set data object value
+        clipboard.SetText(data)
+        # Put the data in the clipboard
+        if wx.TheClipboard.Open():
+            wx.TheClipboard.SetData(clipboard)
+            wx.TheClipboard.Close()
+        else:
+            wx.MessageBox("Can't open the clipboard", "Error")
 
 
     def onEditCell(self,event):
