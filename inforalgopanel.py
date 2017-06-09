@@ -10,7 +10,7 @@ import wx
 #import datetime
 import wx.grid as gridlib
 import inforalgo
-
+from wx.lib.scrolledpanel import ScrolledPanel
 
 # def wxdate2pydate(date):
 #     """Function to convert wx.datetime to datetime.datetime format
@@ -22,11 +22,13 @@ import inforalgo
 #     else:
 #         return None
 
-class InforalgoControlPanel(wx.Panel):
-    def __init__(self, parent, table = None, bdm = None):
-        wx.Panel.__init__(self, parent=parent)
+class InforalgoControlPanel(ScrolledPanel):
+    def __init__(self, parent, uat_table = None, prd_table = None, bdm = None):
+        ScrolledPanel.__init__(self, parent)
+        self.SetupScrolling(scroll_x=False, scroll_y=True)
         self.parent = parent
-        self.table = table
+        self.uat_table = uat_table
+        self.prd_table = prd_table
         self.bdm = bdm
         self.topSizer = wx.BoxSizer(wx.VERTICAL)
         #ADD ONE RECORD
@@ -94,8 +96,24 @@ class InforalgoControlPanel(wx.Panel):
         self.sizerDeleteAllRecords.Add(txtDeleteAllPricerWarning,proportion=0,flag=wx.ALL,border=5)
         self.sizerDeleteAllRecords.Add(self.isinDeleteAllCtrl,proportion=0,flag=wx.ALL,border=5)
         self.sizerDeleteAllRecords.Add(self.isinDeleteAllButton,proportion=0,flag=wx.ALL,border=5)
+        #INFORALGO PRD TABLE DISPLAY
+        self.boxPRDTableDisplay = wx.StaticBox(self,label = 'Inforalgo PRD table contents')
+        self.sizerPRDTableDisplay = wx.StaticBoxSizer(self.boxPRDTableDisplay,wx.VERTICAL)   
+        self.refreshButtonPRD = wx.Button(self, label = "Refresh!")
+        self.refreshButtonPRD.Bind(wx.EVT_BUTTON, self.onRefreshButtonPRD)
+        self.inforalgoGridPRD = gridlib.Grid(self)
+        self.inforalgoGridPRD.ShowScrollbars(wx.SHOW_SB_NEVER,wx.SHOW_SB_ALWAYS)
+        self.inforalgoGridRowsPRD = 10
+        self.inforalgoGridPRD.CreateGrid(self.inforalgoGridRowsPRD,9)#one extra empty col at the end
+        self.inforalgoGridPRD.SetColSize(8,20)#that extra col is small, the scrollbar will be on top
+        self.inforalgoGridPRD.EnableEditing = False
+        inforalgoGridCols = ['bbrgDate','bbrgTime','bbrgStatus','bbrgSec6id','bbrgVala','bbrgValc','bbrgValb','bbrgVald']
+        for (i,h) in enumerate(inforalgoGridCols):
+            self.inforalgoGridPRD.SetColLabelValue(i,h)
+        self.sizerPRDTableDisplay.Add(self.refreshButtonPRD,proportion=0,flag=wx.ALL,border=5)
+        self.sizerPRDTableDisplay.Add(self.inforalgoGridPRD,proportion=0,flag=wx.ALL,border=5)
         #INFORALGO TABLE DISPLAY
-        self.boxTableDisplay = wx.StaticBox(self,label = 'Inforalgo table contents')
+        self.boxTableDisplay = wx.StaticBox(self,label = 'Inforalgo UAT table contents')
         self.sizerTableDisplay = wx.StaticBoxSizer(self.boxTableDisplay,wx.VERTICAL)   
         self.refreshButton = wx.Button(self, label = "Refresh!")
         self.refreshButton.Bind(wx.EVT_BUTTON, self.onRefreshButton)
@@ -128,6 +146,7 @@ class InforalgoControlPanel(wx.Panel):
         self.hSizerUpdatePrices.Add(self.sizerUpdateTimeStampsRecords, 1, wx.ALL|wx.EXPAND, 10)
         self.hSizerUpdatePrices.Add(self.sizerUpdateFromTable, 1, wx.ALL|wx.EXPAND, 10)
         self.topSizer.Add(self.hSizerUpdatePrices, 0, wx.ALL|wx.EXPAND, 10)
+        self.topSizer.Add(self.sizerPRDTableDisplay, 0, wx.ALL|wx.EXPAND, 10)
         self.topSizer.Add(self.sizerTableDisplay, 0, wx.ALL|wx.EXPAND, 10)
         self.SetSizer(self.topSizer)
         self.Layout()
@@ -139,63 +158,119 @@ class InforalgoControlPanel(wx.Panel):
         bid_size = float(self.inputGrid.GetCellValue(0,3))
         ask_size = float(self.inputGrid.GetCellValue(0,4))
         try:
-            self.table.insert_record(isin, bid_price, ask_price, bid_size*1000, ask_size*1000)
+            self.uat_table.insert_record(isin, bid_price, ask_price, bid_size*1000, ask_size*1000)
+            print 'UAT inserted ' + isin
         except:
-            print 'Failed to insert price for ' + isin
+            print 'UAT possible error inserting ' + isin
+        try:            
+            self.prd_table.insert_record(isin, bid_price, ask_price, bid_size*1000, ask_size*1000)
+            print 'PRD inserted ' + isin
+        except:
+            print 'PRD possible error inserting ' + isin
+        # try:
+        #     self.uat_table.insert_record(isin, bid_price, ask_price, bid_size*1000, ask_size*1000)
+        #     print 'Inserted ' + isin
+        # except:
+        #     print 'Failed to insert price for ' + isin
+        # try:
+        #     self.prd_table.insert_record(isin, bid_price, ask_price, bid_size*1000, ask_size*1000)
+        #     print 'PRD inserted ' + isin
+        # except:
+        #     print 'PRD failed to insert price for ' + isin
         pass
 
     def onIsinDeleteButton(self, event):
-        self.table.delete_record(self.isinDeleteCtrl.GetValue())
+        self.uat_table.delete_record(self.isinDeleteCtrl.GetValue())
+        self.prd_table.delete_record(self.isinDeleteCtrl.GetValue())
         self.onRefreshButton(event)
         pass
 
-    def onAddPricerRecordsButton(self,event):
-        df = self.table.read_table()
+    def onAddPricerRecordsButton(self, event):
+        df = self.uat_table.read_table()
+        df_prd = self.prd_table.read_table()
         existing_isins = list(df['bbrgSec6id'])
+        existing_isins_prd = list(df_prd['bbrgSec6id'])
         for (i,bonddata) in self.bdm.df.iterrows():
             if bonddata['ISIN'] not in existing_isins:
                 try:
-                    self.table.insert_record(bonddata['ISIN'], bonddata['BID'], bonddata['ASK'], int(bonddata['BID_SIZE']), int(bonddata['ASK_SIZE']))
+                    self.uat_table.insert_record(bonddata['ISIN'], bonddata['BID'], bonddata['ASK'], int(bonddata['BID_SIZE']), int(bonddata['ASK_SIZE']))
                 except:
                     print 'Error adding ' + bonddata['ISIN']
+        for (i,bonddata) in self.bdm.df.iterrows():
+            if bonddata['ISIN'] not in existing_isins_prd:
+                try:
+                    self.prd_table.insert_record(bonddata['ISIN'], bonddata['BID'], bonddata['ASK'], int(bonddata['BID_SIZE']), int(bonddata['ASK_SIZE']))
+                except:
+                    print 'PRD error adding ' + bonddata['ISIN']
         self.onRefreshButton(event)
 
     def onDeletePricerRecordsButton(self,event):
         for (i,bonddata) in self.bdm.df.iterrows():
-            self.table.delete_record(bonddata['ISIN'])
+            self.uat_table.delete_record(bonddata['ISIN'])
+            self.prd_table.delete_record(bonddata['ISIN'])
         self.onRefreshButton(event)
 
     def onDeleteAllRecordsButton(self,event):
         if self.isinDeleteAllCtrl.GetValue().encode('hex') == '4963426353':#decode this to find out password
-            self.table.empty_table()
+            self.uat_table.empty_table()
+            self.prd_table.empty_table()
         self.onRefreshButton(event)
 
     def onUpdateTimeStampsRecordsButton(self,event):
         for (i,bonddata) in self.bdm.df.iterrows():
             if bonddata['BID_SIZE'] != 0 or bonddata['ASK_SIZE'] != 0:
                 try:
-                    self.table.send_price(bonddata['ISIN'], bonddata['BID'], bonddata['ASK'], int(float(bonddata['BID_SIZE'])), int(float(bonddata['ASK_SIZE'])))
+                    self.uat_table.send_price(bonddata['ISIN'], bonddata['BID'], bonddata['ASK'], int(float(bonddata['BID_SIZE'])), int(float(bonddata['ASK_SIZE'])))
                 except:
                     print 'Failed to send price for ' + bonddata['ISIN']
+                try:
+                    self.prd_table.send_price(bonddata['ISIN'], bonddata['BID'], bonddata['ASK'], int(float(bonddata['BID_SIZE'])), int(float(bonddata['ASK_SIZE'])))
+                except:
+                    print 'PRD failed to send price for ' + bonddata['ISIN']
         self.onRefreshButton(event)
 
     def onUpdateFromTableButton(self,event):
         '''
         This will only push data if it's in the Inforalgo table AND in the Pricer.
         '''
-        df = self.table.read_table()
+        df = self.uat_table.read_table()
+        df_prd = self.prd_table.read_table()
         bdm_isins = list(self.bdm.df['ISIN'])
         for (i,row) in df.iterrows():
             if row['bbrgSec6id'] in bdm_isins:
                 try:
-                    self.table.send_price(row['bbrgSec6id'], float(row['bbrgVala']), float(row['bbrgValc']), int(float(row['bbrgValb'])), int(float(row['bbrgVald'])))
+                    self.uat_table.send_price(row['bbrgSec6id'], float(row['bbrgVala']), float(row['bbrgValc']), int(float(row['bbrgValb'])), int(float(row['bbrgVald'])))
                 except:
                     print 'Failed to send price for ' + row['bbrgSec6id']
+        for (i,row) in df_prd.iterrows():
+            if row['bbrgSec6id'] in bdm_isins:
+                try:
+                    self.prd_table.send_price(row['bbrgSec6id'], float(row['bbrgVala']), float(row['bbrgValc']), int(float(row['bbrgValb'])), int(float(row['bbrgVald'])))
+                except:
+                    print 'PRD failed to send price for ' + row['bbrgSec6id']
+        pass
+
+    def onRefreshButtonPRD(self, event):
+        self.inforalgoGridPRD.ClearGrid()
+        df = self.prd_table.read_table()
+        if df.shape[0] > self.inforalgoGridRowsPRD:
+            self.inforalgoGridPRD.AppendRows(df.shape[0]-self.inforalgoGridRowsPRD)
+            self.inforalgoGridRowsPRD = df.shape[0]
+        for row in df.itertuples():
+            self.inforalgoGridPRD.SetCellValue(row[0],0,str(row[1]).strip())
+            self.inforalgoGridPRD.SetCellValue(row[0],1,str(row[2]).strip())
+            self.inforalgoGridPRD.SetCellValue(row[0],2,str(row[3]).strip())
+            self.inforalgoGridPRD.SetCellValue(row[0],3,str(row[4]).strip())
+            self.inforalgoGridPRD.SetCellValue(row[0],4,str(row[5]).strip())
+            self.inforalgoGridPRD.SetCellValue(row[0],5,str(row[6]).strip())
+            self.inforalgoGridPRD.SetCellValue(row[0],6,str(row[7]).strip())
+            self.inforalgoGridPRD.SetCellValue(row[0],7,str(row[8]).strip())
+        self.Refresh()
         pass
 
     def onRefreshButton(self, event):
         self.inforalgoGrid.ClearGrid()
-        df = self.table.read_table()
+        df = self.uat_table.read_table()
         if df.shape[0] > self.inforalgoGridRows:
             self.inforalgoGrid.AppendRows(df.shape[0]-self.inforalgoGridRows)
             self.inforalgoGridRows = df.shape[0]
@@ -216,9 +291,10 @@ class InforalgoControlPanel(wx.Panel):
 
 class InforalgoControlFrame(wx.Frame):
     def __init__(self):
-        wx.Frame.__init__(self, None, wx.ID_ANY, "Inforalgo control panel",size=(925,850))
-        table = inforalgo.SQLTable()
-        self.panel=InforalgoControlPanel(self, table=table)
+        wx.Frame.__init__(self, None, wx.ID_ANY, "Inforalgo control panel",size=(1280,850))
+        uat_table = inforalgo.SQLTable(inforalgo.UAT_SERVER_CONNECTION_STRING)
+        prd_table = inforalgo.SQLTable(inforalgo.PRD_SERVER_CONNECTION_STRING)
+        self.panel = InforalgoControlPanel(self, uat_table=uat_table, prd_table=prd_table)
 
 
 if __name__ == "__main__":

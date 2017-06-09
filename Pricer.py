@@ -306,6 +306,10 @@ class RunsGrid(gridlib.Grid):
 
 
 
+class GenericPricingGrid(gridlib.Grid):
+    def __init__(self):
+        pass
+
 class PricingGrid(gridlib.Grid):
     """PricingGrid class : Class to define the pricing grid
 
@@ -352,12 +356,6 @@ class PricingGrid(gridlib.Grid):
         tab : pandas.DataFrame containing the names of the tabs to be created 
         columnList : list of columns
         bdm : BondDataModel class instance
-
-        ---------------------
-        Back to PricingGrid
-        Back to RunsGrid
-        Back to PricerWindow
-        ---------------------
         """
         gridlib.Grid.__init__(self, panel)
         #Attributes creation
@@ -391,17 +389,14 @@ class PricingGrid(gridlib.Grid):
         sendattr.SetReadOnly(True)
         sendattr.SetFont(self.fontBold)
 
-
         self.daysToCouponWarning = 10
         self.clickedISIN = ''
         self.clickedBond = ''
-
         self.tabKeyCounter = 0
 
         pub.subscribe(self.updateLine, "BOND_PRICE_UPDATE")
         pub.subscribe(self.updatePositions, "POSITION_UPDATE")
-
-        #self.EnableEditing(False)
+        pub.subscribe(self.updateBGNPrices, "BGN_PRICE_UPDATE")
 
         self.tab = tab
         self.bondList = list(self.tab['Bonds'])
@@ -413,30 +408,28 @@ class PricingGrid(gridlib.Grid):
         self.bdm = bdm
         self.pricer = pricer
         self.CreateGrid(len(self.bondList), len(self.columnList))
-        # attr = wx.grid.GridCellAttr()
-        # attr.SetAlignment(wx.ALIGN_RIGHT,wx.ALIGN_CENTRE)
-
 
         colFormats['wxFormat'] = pandas.np.nan
         if self.pricer.mainframe is None or self.pricer.mainframe.isTrader:        
-            colFormats.loc[colFormats['Format']=='BIDASK','wxFormat'] = bidaskinputattr
+            colFormats.loc[colFormats['Format']=='BIDASK', 'wxFormat'] = bidaskinputattr
         else:
-            colFormats.loc[colFormats['Format']=='BIDASK','wxFormat'] = bidaskattr
-        colFormats.loc[colFormats['Format']=='CENTRE','wxFormat'] = centrealignattr
-        colFormats.loc[colFormats['Format']=='RIGHT','wxFormat'] = rightalignattr
-        colFormats.loc[colFormats['Format']=='DEFAULT','wxFormat'] = defattr
-        colFormats.loc[colFormats['Format']=='BIDASKINPUT','wxFormat'] = bidaskinputattr
-        colFormats.loc[colFormats['Format']=='BIDASKSIZEINPUT','wxFormat'] = bidasksizeinputattr
+            colFormats.loc[colFormats['Format']=='BIDASK', 'wxFormat'] = bidaskattr
+        colFormats.loc[colFormats['Format']=='CENTRE', 'wxFormat'] = centrealignattr
+        colFormats.loc[colFormats['Format']=='RIGHT', 'wxFormat'] = rightalignattr
+        colFormats.loc[colFormats['Format']=='DEFAULT', 'wxFormat'] = defattr
+        colFormats.loc[colFormats['Format']=='BIDASKINPUT', 'wxFormat'] = bidaskinputattr
+        colFormats.loc[colFormats['Format']=='BIDASKSIZEINPUT', 'wxFormat'] = bidasksizeinputattr
         for c in self.columnList:
             if c in colFormats.index:
-                self.SetColAttr(self.columnList.index(c), colFormats.loc[c,'wxFormat'])
-                self.SetColSize(self.columnList.index(c), colFormats.loc[c,'Width'])
+                self.SetColAttr(self.columnList.index(c), colFormats.loc[c, 'wxFormat'])
+                self.SetColSize(self.columnList.index(c), colFormats.loc[c, 'Width'])
 
         self.SetRowLabelSize(1)
 
         self.Bind(gridlib.EVT_GRID_CELL_RIGHT_CLICK, self.showPopUpMenu)
         self.Bind(gridlib.EVT_GRID_CELL_CHANGE, self.onEditCell)
         self.Bind(wx.EVT_KEY_DOWN, self.onKeyDown)
+        self.Bind(gridlib.EVT_GRID_SELECT_CELL, self.onSingleSelection)
         self.Bind(gridlib.EVT_GRID_RANGE_SELECT, self.onSelection)
 
         self.showAllqID = wx.NewId()
@@ -465,21 +458,14 @@ class PricingGrid(gridlib.Grid):
         self.Bind(wx.EVT_MENU, self.onPastePrices, id=self.pastePricesID)
         self.selected_row_number = 0
         self.selected_col_number = 0
-        self.previous_selected_row_number = 0
-        self.previous_selected_col_number = 0
-
+        self.previousSingleSelection = True
+        self.singleSelection = True
 
     def initialPaint(self):
         """
         Function to paint the background colour orange when Pricer is first loaded. Function is called by
         PricerWindow.
         Salespeople only see positions up to 1mm absolute size.
-
-        ---------------------
-        Back to PricingGrid
-        Back to RunsGrid
-        Back to PricerWindow
-        ---------------------
         """
         wx.lib.colourdb.updateColourDB()
         headerlineattr = wx.grid.GridCellAttr()
@@ -500,7 +486,6 @@ class PricingGrid(gridlib.Grid):
                     if header in self.bdm.df.columns:
                         value = self.bdm.df.at[bond, header]
                         if header == 'POSITION':
-                            #value = self.bdm.df.at[bond, header]
                             if self.bdm.mainframe is None or self.bdm.mainframe.isTrader:
                                 value = '{:,.0f}'.format(value)
                             else:
@@ -517,16 +502,8 @@ class PricingGrid(gridlib.Grid):
                         self.SetCellValue(i, j, value)
                         if header == 'D2CPN' and self.bdm.df.at[bond, header] <= self.daysToCouponWarning:
                             self.SetCellBackgroundColour(i, j, wx.RED)
-                    # if header == 'IBP':
-                    #     self.SetCellValue(i,j,'{:,.03f}'.format(self.bdm.df.at[bond, 'BID']))
-                    # if header == 'IAP':
-                    #     self.SetCellValue(i,j,'{:,.03f}'.format(self.bdm.df.at[bond, 'ASK']))
-                    if header == 'BID_S':
-                        self.SetCellValue(i,j,'{:,.0f}'.format(self.bdm.df.at[bond, 'BID_SIZE']/1000.))
-                    if header == 'ASK_S':
-                        self.SetCellValue(i,j,'{:,.0f}'.format(self.bdm.df.at[bond, 'ASK_SIZE']/1000.))
-                    # if header == 'CHECK':
-                    #     self.SetCellValue(i,j,'OK')
+                    if header in ['BID_S', 'ASK_S']:
+                        self.SetCellValue(i,j,'{:,.0f}'.format(self.bdm.df.at[bond, header + 'IZE']/1000.))
                 else:
                     if j == 0:
                         self.SetCellValue(i, j, bond)
@@ -550,19 +527,33 @@ class PricingGrid(gridlib.Grid):
             pass
         event.Skip() # important, otherwise one would need to define all possible events
 
+    def onSingleSelection(self, event):
+        bond = self.GetCellValue(event.GetRow(), 1)
+        if bond in self.bdm.df.index and self.bdm.mainframe.isTrader:
+            postxt = 'REGS: ' + '{:,.0f}'.format(self.bdm.df.at[bond, 'REGS']) + '    144A: '+ '{:,.0f}'.format(self.bdm.df.at[bond, '144A'])
+            risktxt = 'SPV01: ' + '{:,.0f}'.format(self.bdm.df.at[bond, 'RISK'])
+            wx.CallAfter(self.writeToStatusBar, bond + ':    ' + postxt + '    ' + risktxt)
+        event.Skip()
 
     def onSelection(self, event):
-        #print event.GetEventType()
-        self.previous_selected_row_number = self.selected_row_number
-        self.previous_selected_col_number = self.selected_col_number
+        # issue is this and onSingleSelection are both fired concurrently
+        self.previousSingleSelection = self.singleSelection
         if self.GetSelectionBlockTopLeft() == []:
-            self.selected_row_number = 0
-            self.selected_col_number = 0
+            self.singleSelection = True
         else:
+            self.singleSelection = False
             self.selected_row_number = self.GetSelectionBlockBottomRight()[0][0] - self.GetSelectionBlockTopLeft()[0][0] + 1
             self.selected_col_number = self.GetSelectionBlockBottomRight()[0][1] - self.GetSelectionBlockTopLeft()[0][1] + 1
-        #print self.selected_row_number, self.selected_col_number
-        #print self.previous_selected_row_number, self.previous_selected_col_number
+        if self.selected_col_number == 1 and self.GetGridCursorCol() == self.columnList.index('POSITION') and self.bdm.mainframe.isTrader:
+            rowstart = self.GetGridCursorRow()
+            bondlist = [self.GetCellValue(rowstart + r, 1) for r in range(self.selected_row_number)]
+            postxt = 'Position: ' + '{:,.0f}'.format(self.bdm.df.loc[bondlist,'POSITION'].sum())
+            risktxt = 'SPV01: ' + '{:,.0f}'.format(self.bdm.df.loc[bondlist,'RISK'].sum())
+            wx.CallAfter(self.writeToStatusBar, 'Sum:' + '    ' + postxt + '    ' + risktxt)
+            pass
+
+    def writeToStatusBar(self,txt):
+        self.pricer.statusbar.SetStatusText(txt, 3)
 
     def onCopySelection(self):
         # Number of rows and cols
@@ -603,31 +594,25 @@ class PricingGrid(gridlib.Grid):
 
 
     def onEditCell(self,event):
-        #print self.previous_selected_row_number, self.previous_selected_col_number
-        if self.previous_selected_row_number == 0 and self.previous_selected_col_number == 0:
+        if self.previousSingleSelection:
             self.onEditSingleCell(event)
         else:
-            #print 'Multiple selection detected'
             rowstart = event.GetRow()
             col = event.GetCol()
             colID = self.GetColLabelValue(col)
-            #print colID
-            strNewValue = self.GetCellValue(rowstart,col)
+            strNewValue = self.GetCellValue(rowstart, col)
             self.onEditSingleCell(event)
-            if self.previous_selected_col_number == 1 and colID == 'BID':
-                #print rowstart
-                for r in range(self.previous_selected_row_number):
+            if self.selected_col_number == 1 and colID == 'BID':
+                for r in range(self.selected_row_number):
                     if r==0:
                         continue#already done above
                     row = rowstart + r
-                    #print row
                     bond = self.GetCellValue(row,1)
-                    #print bond
                     oldValue = float(self.GetCellValue(row,col))
                     newValue = self.readInput(oldValue,strNewValue)
                     self.SetCellValue(row,col,'{:,.3f}'.format(newValue))
                     try:
-                        oldOffer = float(self.GetCellValue(row,col+1))
+                        oldOffer = float(self.GetCellValue(row, col + 1))
                     except:
                         oldOffer = 0
                     self.SetCellValue(row,col+1,'{:,.3f}'.format(newValue + oldOffer - oldValue))
@@ -645,28 +630,16 @@ class PricingGrid(gridlib.Grid):
         strNewValue = self.GetCellValue(row,col)
         newValue = self.readInput(oldValue,strNewValue)
         if colID == 'BID' or colID == 'ASK':
-            self.SetCellValue(row,col,'{:,.3f}'.format(newValue))
+            self.SetCellValue(row, col, '{:,.3f}'.format(newValue))
         if colID == 'BID_S' or colID == 'ASK_S':
-            self.SetCellValue(row,col,'{:,.0f}'.format(newValue))
+            self.SetCellValue(row, col, '{:,.0f}'.format(newValue))
         if colID == 'BID':
             try:
-                oldOffer = float(self.GetCellValue(row,col+1))
+                oldOffer = float(self.GetCellValue(row,col + 1))
             except:
                 oldOffer = 0
-            self.SetCellValue(row,col+1,'{:,.3f}'.format(newValue + oldOffer - oldValue))
+            self.SetCellValue(row, col + 1, '{:,.3f}'.format(newValue + oldOffer - oldValue))
         self.sendUpdateToInforalgo(row)
-        # wx.CallAfter(self.dataSentWarning,row)
-        # bbg_sec_id = self.GetCellValue(row,0)
-        # bid_price = float(self.GetCellValue(row, self.columnList.index('BID')))
-        # ask_price = float(self.GetCellValue(row, self.columnList.index('ASK')))
-        # try:
-        #     bid_size = int(self.GetCellValue(row, self.columnList.index('BID_S')).replace(',',''))
-        #     ask_size = int(self.GetCellValue(row, self.columnList.index('ASK_S')).replace(',',''))
-        # except:
-        #     bid_size = 0
-        #     ask_size = 0
-        # self.pricer.table.send_price(bbg_sec_id, bid_price, ask_price, bid_size*1000, ask_size*1000)
-        #print 'Update sent successfully to inforalgo for ' + bond
 
     def sendUpdateToInforalgo(self,row):
         wx.CallAfter(self.dataSentWarning,row)
@@ -679,7 +652,8 @@ class PricingGrid(gridlib.Grid):
         except:
             bid_size = 0
             ask_size = 0
-        self.pricer.table.send_price(bbg_sec_id, bid_price, ask_price, bid_size*1000, ask_size*1000)
+        self.pricer.uat_table.send_price(bbg_sec_id, bid_price, ask_price, bid_size*1000, ask_size*1000)
+        self.pricer.prd_table.send_price(bbg_sec_id, bid_price, ask_price, bid_size*1000, ask_size*1000)
         pass
 
     def basisPointShift(self,bond,oldValue,strNewValue):
@@ -743,10 +717,8 @@ class PricingGrid(gridlib.Grid):
         return newValue
 
     def dataSentWarning(self,row):
-        self.SetCellBackgroundColour(row, self.columnList.index('BID'), wx.YELLOW)
-        self.SetCellBackgroundColour(row, self.columnList.index('ASK'), wx.YELLOW)
-        self.SetCellBackgroundColour(row, self.columnList.index('BID_S'), wx.YELLOW)
-        self.SetCellBackgroundColour(row, self.columnList.index('ASK_S'), wx.YELLOW)
+        for cell in ['BID', 'ASK', 'BID_S', 'ASK_S']:
+            self.SetCellBackgroundColour(row, self.columnList.index(cell), wx.YELLOW)
 
     def onPastePrices(self, event):
         if not wx.TheClipboard.IsOpened():
@@ -772,65 +744,21 @@ class PricingGrid(gridlib.Grid):
                     bid_size = 0
                     ask_size = 0
                 wx.CallAfter(self.dataSentWarning,row)
-                self.pricer.table.send_price(bbg_sec_id, bid_price, ask_price, bid_size*1000, ask_size*1000)
-
-    # def showPopUpMenuOld(self, event):
-    #     """
-    #     Create and display a popup menu on right-click event. Function is called by __init__() when user 
-    #     right clicks on a grid.
-
-    #     ---------------------
-    #     Back to PricingGrid
-    #     Back to RunsGrid
-    #     Back to PricerWindow
-    #     ---------------------       
-    #     """
-    #     menu = wx.Menu()
-    #     self.clickedBond = self.GetCellValue(event.GetRow(), self.columnList.index('BOND'))
-    #     self.clickedISIN = self.bdm.df.at[self.clickedBond, 'ISIN']
-    #     showAllqItem = wx.MenuItem(menu, self.showAllqID, "ALLQ")
-    #     menu.AppendItem(showAllqItem)
-    #     showTradeHistoryItem = wx.MenuItem(menu, self.showTradeHistoryID, "Trade history")
-    #     menu.AppendItem(showTradeHistoryItem)
-    #     showDESItem = wx.MenuItem(menu, self.showDESID, "DES")
-    #     menu.AppendItem(showDESItem)
-    #     showCNItem = wx.MenuItem(menu, self.showCNID, "CN")
-    #     menu.AppendItem(showCNItem)
-    #     showGPItem = wx.MenuItem(menu, self.showGPID, "GP")
-    #     menu.AppendItem(showGPItem)
-    #     menu.AppendSeparator()
-    #     copyLineItem = wx.MenuItem(menu, self.copyLineID, "Copy line")
-    #     menu.AppendItem(copyLineItem)
-    #     copyISINItem = wx.MenuItem(menu, self.copyISINID, "Copy ISIN")
-    #     menu.AppendItem(copyISINItem)
-    #     pastePricesItem = wx.MenuItem(menu, self.pastePricesID, "Paste prices")
-    #     menu.AppendItem(pastePricesItem)
-    #     self.PopupMenu(menu)
-    #     self.Bind(wx.EVT_MENU, self.showALLQ, showAllqItem)
-    #     self.Bind(wx.EVT_MENU, self.showTradeHistory, showTradeHistoryItem)
-    #     self.Bind(wx.EVT_MENU, self.showDES, showDESItem)
-    #     self.Bind(wx.EVT_MENU, self.showCN, showCNItem)
-    #     self.Bind(wx.EVT_MENU, self.showGP, showGPItem)
-    #     self.Bind(wx.EVT_MENU, self.copyLine, copyLineItem)
-    #     self.Bind(wx.EVT_MENU, self.copyISIN, copyISINItem)
-    #     self.Bind(wx.EVT_MENU, self.onPastePrices, pastePricesItem)
-    #     menu.Destroy()
+                self.pricer.uat_table.send_price(bbg_sec_id, bid_price, ask_price, bid_size*1000, ask_size*1000)
+                self.pricer.prd_table.send_price(bbg_sec_id, bid_price, ask_price, bid_size*1000, ask_size*1000)
 
     def showPopUpMenu(self, event, fromWindowsMenu=False):
         """
         Create and display a popup menu on right-click event. Function is called by __init__() when user 
         right clicks on a grid.
-
-        ---------------------
-        Back to PricingGrid
-        Back to RunsGrid
-        Back to PricerWindow
-        ---------------------       
         """
         menu = wx.Menu()
         if not fromWindowsMenu:
             self.clickedBond = self.GetCellValue(event.GetRow(), self.columnList.index('BOND'))
-        self.clickedISIN = self.bdm.df.at[self.clickedBond, 'ISIN']
+        try:
+            self.clickedISIN = self.bdm.df.at[self.clickedBond, 'ISIN']
+        except:
+            self.clickedISIN = ''
         showAllqItem = wx.MenuItem(menu, self.showAllqID, "ALLQ")
         menu.AppendItem(showAllqItem)
         showTradeHistoryItem = wx.MenuItem(menu, self.showTradeHistoryID, "Trade history")
@@ -1007,41 +935,44 @@ class PricingGrid(gridlib.Grid):
         self.ForceRefresh() #Note, this line should be outside the for loop! Otherwise screen will refresh for every cell, which will crash the program!
         pass
 
-    def createField(self, data, displayField):
+    def createField(self, data, fld):
         """Creates the fields to be displayed.
         """
-        if displayField == 'BID':
-            return '{:,.3f}'.format(data['BID'])
-        elif displayField == 'ASK':
-            return '{:,.3f}'.format(data['ASK'])
-        elif displayField == 'MID':
-            return '{:,.3f}'.format(data['MID'])
-        elif displayField == 'CLICK TO SEND':
+        if fld in ['BID','ASK','MID']:
+            return '{:,.3f}'.format(data[fld])
+        elif fld == 'CLICK TO SEND':
             return 'SEND'
-        elif displayField == 'YIELD':
+        elif fld == 'YIELD':
             return '{:,.2f}'.format(data['YLDB']) + ' / ' + '{:,.2f}'.format(data['YLDA'])
-        elif displayField == 'Z-SPREAD':
+        elif fld == 'Z-SPREAD':
             return '{:,.0f}'.format(data['ZB']) + ' / ' + '{:,.0f}'.format(data['ZA'])
-        elif displayField == 'DP(1D/1W/1M)':
+        elif fld == 'DP(1D/1W/1M)':
             return '{:,.2f}'.format(data['DP1D']) + ' / ' + '{:,.2f}'.format(data['DP1W']) + ' / ' + '{:,.2f}'.format(
                 data['DP1M'])
-        elif displayField == 'DY(1D/1W/1M)':
+        elif fld == 'DY(1D/1W/1M)':
             return '{:,.0f}'.format(data['DY1D']) + ' / ' + '{:,.0f}'.format(data['DY1W']) + ' / ' + '{:,.0f}'.format(
                 data['DY1M'])
-        elif displayField == 'S / M / F':
+        elif fld == 'S / M / F':
             # print bond
             return data['SNP'] + ' / ' + data['MDY'] + ' / ' + data['FTC']
-        elif displayField == 'DZ(1D/1W/1M)':
+        elif fld == 'DZ(1D/1W/1M)':
            return '{:,.0f}'.format(data['DISP1D']) + ' / ' + '{:,.0f}'.format(data['DISP1W']) + ' / ' + '{:,.0f}'.format(
                data['DISP1M']) 
-        elif displayField == 'RSI14':
+        elif fld == 'RSI14':
            return '{:,.0f}'.format(data['RSI14'])
-        elif displayField == 'BID_S':
-            return '{:,.0f}'.format(data['BID_SIZE']/1000)
-        elif displayField == 'ASK_S':
-            return '{:,.0f}'.format(data['ASK_SIZE']/1000)
+        elif fld in ['BID_S','ASK_S']:
+            return '{:,.0f}'.format(data[fld+'IZE']/1000)
         else:
             return 'N/A'
+
+    def updateBGNPrices(self, message=None):
+        wx.CallAfter(self.updateBGNPricesAction)
+
+    def updateBGNPricesAction(self):
+        j = self.columnList.index('BGN_M')
+        for (i, bond) in enumerate(self.bondList):
+            if bond in self.bdm.df.index:
+                self.SetCellValue(i, j, '{:,.3f}'.format(self.bdm.df.at[bond, 'BGN_MID']))
 
 
 class PricerWindow(wx.Frame):
@@ -1083,31 +1014,38 @@ class PricerWindow(wx.Frame):
 
         pub.subscribe(self.updateTime, "BOND_PRICE_UPDATE")
         pub.subscribe(self.updatePositions, "POSITION_UPDATE")
+        pub.subscribe(self.updateBGNPrices, "BGN_PRICE_UPDATE")
 
         wx.Frame.__init__(self, None, wx.ID_ANY, "Eurobond pricer", size=(1280, 800))
         favicon = wx.Icon(APPPATH+'keyboard.ico', wx.BITMAP_TYPE_ICO, 32,32)
-        wx.Frame.SetIcon(self,favicon)
+        wx.Frame.SetIcon(self, favicon)
+
+        self.statusbar = self.CreateStatusBar()
+        self.statusbar.SetFieldsCount(4) 
+        self.statusbar.SetStatusWidths([-1, -1, -1, -3])
+        self.statusbar.SetStatusText('Last Front update: ' + self.lastUpdateString(),0)
+        self.statusbar.SetStatusText('Last rates update: ' + datetime.datetime.now().strftime('%H:%M'),1)
+        self.statusbar.SetStatusText('Last Bloomberg update: ' + datetime.datetime.now().strftime('%H:%M'),2)
+        self.statusbar.SetStatusText('Sum:',3)
 
         self.Bind(wx.EVT_CLOSE, self.onClose)
         
-
         self.panel = wx.Panel(self) # main panel on the frame
-
         notebookPanel = wx.Panel(self.panel) # the notebook sits on the main panel
         self.notebook = wx.Notebook(notebookPanel)
 
         if mainframe is None or mainframe.isTrader:
-            self.table = inforalgo.SQLTable()
-            self.tabInforalgoControlPanel = inforalgopanel.InforalgoControlPanel(parent = self.notebook, table = self.table, bdm = self.bdm)
+            self.uat_table = inforalgo.SQLTable(inforalgo.UAT_SERVER_CONNECTION_STRING)
+            self.prd_table = inforalgo.SQLTable(inforalgo.PRD_SERVER_CONNECTION_STRING)
+            self.tabInforalgoControlPanel = inforalgopanel.InforalgoControlPanel(parent = self.notebook, uat_table = self.uat_table, prd_table = self.prd_table, bdm = self.bdm)
             self.notebook.AddPage(self.tabInforalgoControlPanel, 'Inforalgo')
             self.tabRuns = wx.Panel(parent=self.notebook)
             self.notebook.AddPage(self.tabRuns, 'Runs')
 
-
-        defaultColumnList = ['ISIN', 'BOND','BID', 'ASK', 'BID_S','ASK_S', 'YIELD', 'Z-SPREAD', 'DP(1D/1W/1M)','DZ(1D/1W/1M)',
-                             'BENCHMARK', 'RSI14', 'POSITION', 'ACCRUED', 'D2CPN', 'S / M / F', 'COUPON', 'MATURITY', 'SIZE']#removed columns: 'DY(1D/1W/1M)'
+        defaultColumnList = ['ISIN', 'BOND','BID', 'ASK', 'BID_S','ASK_S', 'BGN_M', 'POSITION', 'YIELD', 'Z-SPREAD', 'DP(1D/1W/1M)','DZ(1D/1W/1M)',
+                             'BENCHMARK', 'RSI14', 'ACCRUED', 'D2CPN', 'S / M / F', 'COUPON', 'MATURITY', 'SIZE']#removed columns: 'DY(1D/1W/1M)' POS AFTER RSI14
         ####DEBUG MODE######
-        #grid_labels = ['Africa']# used for testing
+        # grid_labels = ['Africa', 'IRHedges']# used for testing
         ####END DEBUG MODE######
         for label in grid_labels:#
             csv = pandas.read_csv(DEFPATH+label+'Tab.csv')
@@ -1144,18 +1082,18 @@ class PricerWindow(wx.Frame):
         # ##MAIN WINDOW LAYOUT
         sizer = wx.BoxSizer(wx.VERTICAL)
         buttonsPanel = wx.Panel(self.panel)
-        sizer.Add(buttonsPanel, 0.25, wx.EXPAND, 2)
-        buttonPanelSizer = wx.GridSizer(2,6,0,0)
+        sizer.Add(buttonsPanel, 0.25, wx.EXPAND, 10)
+        buttonPanelSizer = wx.GridSizer(1,6,0,0)
         #Create buttons
         self.frontButton = wx.Button(buttonsPanel, label='Refresh Front data')
         self.frontButton.Bind(wx.EVT_BUTTON, self.onRefreshFrontData)
-        self.lastUpdateTime = wx.TextCtrl(buttonsPanel, -1, self.lastUpdateString())
+        #self.lastUpdateTime = wx.TextCtrl(buttonsPanel, -1, self.lastUpdateString())
         ratesButton = wx.Button(buttonsPanel, label='Refresh Rates')
         ratesButton.Bind(wx.EVT_BUTTON, self.onRefreshSwapRates)
-        self.ratesUpdateTime = wx.TextCtrl(buttonsPanel, -1, 'Starting...')
+        #self.ratesUpdateTime = wx.TextCtrl(buttonsPanel, -1, 'Starting...')
         bloomButton = wx.Button(buttonsPanel, label="Restart Bloomberg connection")
         bloomButton.Bind(wx.EVT_BUTTON, self.onRestartBloombergConnection)
-        self.bloomUpdateTime = wx.TextCtrl(buttonsPanel, -1, 'Starting...')
+        #self.bloomUpdateTime = wx.TextCtrl(buttonsPanel, -1, 'Starting...')
         editTabButton = wx.Button(buttonsPanel, label='Edit current tab')
         editTabButton.Bind(wx.EVT_BUTTON, self.onEditTab)
         tipButton = wx.Button(buttonsPanel, label='Tips')
@@ -1173,15 +1111,15 @@ class PricerWindow(wx.Frame):
             (bloomButton,1,wx.EXPAND,2),
             (editTabButton,1,wx.EXPAND,2),
             (tipButton,1,wx.EXPAND,2),
-            (aboutButton,1,wx.EXPAND,2),
-            (self.lastUpdateTime,1,wx.EXPAND,2),
-            (self.ratesUpdateTime,1,wx.EXPAND,2),
-            (self.bloomUpdateTime,1,wx.EXPAND,2)
+            (aboutButton,1,wx.EXPAND,2)#,
+            #(self.lastUpdateTime,1,wx.EXPAND,2),
+            #(self.ratesUpdateTime,1,wx.EXPAND,2),
+            #(self.bloomUpdateTime,1,wx.EXPAND,2)
             ])
 
         buttonsPanel.SetSizer(buttonPanelSizer)
             
-        sizer.Add(notebookPanel, 1, wx.EXPAND, 5)
+        sizer.Add(notebookPanel, 1, wx.EXPAND, 0)
         notebookPanelSizer = wx.BoxSizer(wx.VERTICAL)
         notebookPanelSizer.Add(self.notebook, 1, wx.EXPAND)
         notebookPanel.SetSizer(notebookPanelSizer)
@@ -1196,7 +1134,7 @@ class PricerWindow(wx.Frame):
         priorityBondList = []
         busyDlg = wx.BusyInfo('Downloading analytics for ' + str(number_of_bonds) + ' bonds...', parent=topframe)
         self.bdm.firstPass(priorityBondList)
-        self.ratesUpdateTime.SetValue(self.lastSwapRefreshTime())
+        # self.ratesUpdateTime.SetValue(self.lastSwapRefreshTime())
         busyDlg = None 
         self.bdm.startUpdates()
         pub.sendMessage('BDM_READY', message = MessageContainer(self.bdm))
@@ -1239,7 +1177,7 @@ class PricerWindow(wx.Frame):
         '''
         try:
             if self.mainframe.th.df['Date'].iloc[-1] != datetime.datetime.today().strftime('%d/%m/%y'):
-                return 'Last updated on ' + self.mainframe.th.df['Date'].iloc[-1] + '.'
+                return self.mainframe.th.df['Date'].iloc[-1] + '.'
             else:
                 return 'Last updated today at ' + datetime.datetime.now().strftime('%H:%M') + '.'
         except:
@@ -1250,33 +1188,39 @@ class PricerWindow(wx.Frame):
         Refreshes front data
         '''
         self.frontButton.Disable()
-        self.lastUpdateTime.SetValue('Requested data update, please wait...')
+        #self.lastUpdateTime.SetValue('Requested data update, please wait...')
+        self.statusbar.SetStatusText('Pulling trade data...',0)
         self.mainframe.onTodayTrades(event)
 
     def updatePositions(self, message=None):
         """Sets the value of lastUpdateTime to self.lastUpdateString()
         """
-        self.lastUpdateTime.SetValue(self.lastUpdateString())
+        #self.lastUpdateTime.SetValue(self.lastUpdateString())
+        self.statusbar.SetStatusText('Last Front update: ' + datetime.datetime.now().strftime('%H:%M'),0)
         self.frontButton.Enable()
-
-    def onRestartBloombergConnection(self, event):
-        '''
-        Restarts Bloomberg Connection by calling the reOpenConnection method from the BondDataModel class. 
-        '''
-        busyDlg = wx.BusyInfo('Restarting Bloomberg Connection...')
-        self.bdm.reOpenConnection()
-        self.bloomUpdateTime.SetValue(self.lastUpdateString())
-        busyDlg = None 
-        pass
 
     def onRefreshSwapRates(self, event):
         '''
         Refreshes the swap rates by calling refreshSwapRates (Class method of BondDataModel)
         '''
-        busyDlg = wx.BusyInfo('Refreshing rates...')
+        #busyDlg = wx.BusyInfo('Refreshing rates...')
+        self.statusbar.SetStatusText('Refreshing swap rates...',2)
         self.bdm.refreshSwapRates()
-        self.ratesUpdateTime.SetValue(self.lastSwapRefreshTime())
-        busyDlg = None
+        #self.ratesUpdateTime.SetValue(self.lastSwapRefreshTime())
+        self.statusbar.SetStatusText('Last rates update: ' + datetime.datetime.now().strftime('%H:%M'),1)
+        #busyDlg = None
+        pass
+
+    def onRestartBloombergConnection(self, event):
+        '''
+        Restarts Bloomberg Connection by calling the reOpenConnection method from the BondDataModel class. 
+        '''
+        #busyDlg = wx.BusyInfo('Restarting Bloomberg Connection...')
+        self.statusbar.SetStatusText('Restarting Bloomberg link...',2)
+        self.bdm.reOpenConnection()
+        #self.bloomUpdateTime.SetValue(self.lastUpdateString())
+        self.statusbar.SetStatusText('Last Bloomberg restart: ' + datetime.datetime.now().strftime('%H:%M'),2)
+        #busyDlg = None 
         pass
 
     def lastSwapRefreshTime(self):
@@ -1289,7 +1233,12 @@ class PricerWindow(wx.Frame):
     def updateTime(self, message=None):
         """Function to update time whenever there's a BOND_PRICE_UPDATE event.
         """
-        self.bloomUpdateTime.SetValue('Last updated today at ' + datetime.datetime.now().strftime('%H:%M') + '.')
+        #self.statusbar.SetStatusText('Last Bloomberg update: ' + datetime.datetime.now().strftime('%H:%M'),2)
+        pass
+
+    def updateBGNPrices(self, message=None):
+        self.statusbar.SetStatusText('Last BGN update: ' + datetime.datetime.now().strftime('%H:%M'),2)
+        pass
 
 
 if __name__ == "__main__":

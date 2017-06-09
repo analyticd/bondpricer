@@ -1,10 +1,12 @@
 """
 Bond pricer - displays data from Bloomberg and Front, MVC architecture.
 Written by Alexandre Almosni   alexandre.almosni@gmail.com
-(C) 2014-2015 Alexandre Almosni
+(C) 2014-2017 Alexandre Almosni
 Released under Apache 2.0 license. More info at http://www.apache.org/licenses/LICENSE-2.0
 
 Classes:
+MessageContainer: simple wrapper
+RFDdata: used to poll risk free prices every few minutes
 BondDataModel: the main class, basically a huge table with data getting updated from Bloomberg in real time.
 StreamWatcher: helper class to send analytics data (both real time price data and static data) to the BondDataModel
 StreamWatcherHistory: helper class to download price history to the BondDataModel
@@ -21,31 +23,73 @@ import threading
 import datetime
 import os
 import time
+from win32api import GetUserName
 
 from SwapHistory import SwapHistory
-from StaticDataImport import ccy, countries, bonds, TEMPPATH, bonduniverseexclusionsList, frontToEmail, SPECIALBONDS, BBGHand, regsToBondName, bbgToBdmDic
+from StaticDataImport import ccy, countries, bonds, TEMPPATH, bonduniverseexclusionsList, frontToEmail, SPECIALBONDS, SINKABLEBONDS, BBGHand, regsToBondName, bbgToBdmDic, PHPATH
 
 class MessageContainer():
     def __init__(self,data):
         self.data = data
 
-def getMaturityDateOld(d):
-    """parse maturity date of the bond in MM/DD/YY format. Bloomberg override for perpetual bonds.
-    """
-    try:
-        return datetime.datetime.strptime(d, '%m/%d/%Y')
-    except:
-        return datetime.datetime(2049, 12, 31)
-
 def getMaturityDate(d):
-    """
-    Function to parse maturity date in YYYY-MM-DD format
-    """
+    # Function to parse maturity date in YYYY-MM-DD format. Override for perps
     try:
-        output=datetime.datetime.strptime(d,'%Y-%m-%d')
+        output = datetime.datetime.strptime(d, '%Y-%m-%d')
     except:
-        output=datetime.datetime(2049,12,31)
+        output = datetime.datetime(2049, 12, 31)
     return output
+
+
+class RFdata(wx.Timer):
+
+    def __init__(self, secs, req, bdm):
+        wx.Timer.__init__(self)
+        self.bdm = bdm
+        self.req = req                     
+        self.Bind(wx.EVT_TIMER, self.refreshRFBonds)
+        self.Start(1000*secs, oneShot = False)
+
+    def refreshRFBonds(self,event):
+        self.req.get()
+        out = self.req.output.astype(float)
+        for (isinkey, data) in out.iterrows():
+            self.bdm.updatePrice(isinkey, 'ALL', data, 'ANALYTICS')
+        # print 'Refreshed RF bonds'
+
+
+class BDMdata(wx.Timer):
+    def __init__(self, secs, bdm):
+        wx.Timer.__init__(self)
+        self.bdm = bdm
+        self.dic = pandas.Series((self.bdm.df['ISIN'] + '@BGN Corp').values, index=self.bdm.df.index).to_dict()
+        self.Bind(wx.EVT_TIMER, self.refreshBDMPrice)
+        self.Start(1000*secs, oneShot = False)
+
+    def refreshBDMPrice(self,event):
+        out = blpapiwrapper.simpleReferenceDataRequest(self.dic,'PX_MID')['PX_MID']
+        self.bdm.lock.acquire()
+        self.bdm.df['BGN_MID'] = out.astype(float)
+        self.bdm.lock.release()
+        pub.sendMessage('BGN_PRICE_UPDATE', message=MessageContainer('empty'))
+
+
+class BDMEODsave(wx.Timer):
+    def __init__(self, bdm):
+        wx.Timer.__init__(self)
+        self.bdm = bdm
+        self.Bind(wx.EVT_TIMER, self.saveFile)
+        now = datetime.datetime.now()
+        fivepm = now.replace(hour=17, minute = 0, second = 0)
+        now_to_five_pm = (fivepm - now).total_seconds()
+        self.Start(1000*now_to_five_pm, oneShot = True)
+
+    def saveFile(self, event):
+        self.bdm.firstPass()
+        out = self.bdm.df[['ISIN', 'BOND', 'MID', 'YLDM', 'ZM', 'BGN_MID']].copy()
+        out.set_index('ISIN', inplace=True)
+        filename = 'bdm-' + datetime.datetime.today().strftime('%Y-%m-%d') + '-' + GetUserName() + '.csv'
+        out.to_csv(PHPATH + filename)
 
 
 class BondDataModel():
@@ -103,15 +147,15 @@ class BondDataModel():
         colsDescription = ['ISIN', 'BOND', 'SERIES', 'CRNCY', 'MATURITY', 'COUPON', 'AMT_OUTSTANDING', 'SECURITY_NAME',
                            'INDUSTRY_GROUP', 'CNTRY_OF_RISK', 'TICKER', 'MATURITYDT']
         # these columns will feed from Bloomberg (or Front) and be regenerated only once
-        colsPriceHistory = ['P1DFRT', 'P1D', 'P1W', 'P1M', 'Y1D', 'Y1W', 'Y1M','SAVG','SAVG1D','SAVG1W','SAVG1M','ISP1D','ISP1W','ISP1M','INTSWAP1D','INTSWAP1W','INTSWAP1M']
+        colsPriceHistory = ['P1DFRT', 'P1D', 'P1W', 'P1M', 'Y1D', 'Y1W', 'Y1M','SAVG','SAVG1D','SAVG1W','SAVG1M','ISP1D','ISP1W','ISP1M','INTSWAP1D','INTSWAP1W','INTSWAP1M', 'PRINCIPAL_FACTOR']
         # these will feed from Bloomberg only once
         colsRating = ['SNP', 'MDY', 'FTC']
         colsAccrued = ['ACCRUED', 'D2CPN']
         # these columns will feed from Bloomberg (or Front) and be regenerated all the time
-        colsPrice = ['BID', 'ASK', 'MID', 'BID_SIZE', 'ASK_SIZE']#ADD LAST_UPDATE
+        colsPrice = ['BID', 'ASK', 'MID', 'BID_SIZE', 'ASK_SIZE', 'BGN_MID']
         colsAnalytics = ['YLDB', 'YLDA', 'YLDM', 'ZB', 'ZA', 'ZM','INTSWAP','ISP','RSI14','RISK_MID']
         colsChanges = ['DP1FRT', 'DP1D', 'DP1W', 'DP1M', 'DY1D', 'DY1W', 'DY1M','DISP1D','DISP1W','DISP1M']
-        colsPosition = ['POSITION']
+        colsPosition = ['POSITION', 'REGS', '144A','MV','RISK']
         self.colsAll = colsDescription + colsPriceHistory + colsRating + colsAccrued + colsPrice + colsAnalytics + colsChanges + colsPosition  # +colsPricingHierarchy+colsUpdate
 
         self.df = pandas.DataFrame(columns=self.colsAll, index=bonds.index)
@@ -133,6 +177,10 @@ class BondDataModel():
         self.bondList = []
         self.bbgPriceQuery = ['BID', 'ASK', 'YLD_CNV_BID', 'YLD_CNV_ASK', 'Z_SPRD_BID', 'Z_SPRD_ASK','RSI_14D', 'BID_SIZE', 'ASK_SIZE']
         self.bbgPriceSpecialQuery = ['BID', 'ASK', 'YLD_CNV_BID', 'YLD_CNV_ASK', 'OAS_SPREAD_BID', 'OAS_SPREAD_ASK','RSI_14D', 'BID_SIZE', 'ASK_SIZE']
+        self.bbgPriceSinkableQuery = ['BID', 'ASK', 'YLD_CNV_BID', 'YLD_CNV_ASK', 'RSI_14D', 'BID_SIZE', 'ASK_SIZE']
+        self.riskFreeIssuers = ['T', 'DBR', 'UKT', 'OBL']
+        self.bbgPriceRFQuery = ['BID', 'ASK', 'BID_YIELD', 'ASK_YIELD']
+        self.bbgSinkRequest = blpapiwrapper.BLPTS()
         pass
 
     def reduceUniverse(self):
@@ -141,13 +189,21 @@ class BondDataModel():
         self.bondList = list(set([bond for grid in self.parent.gridList for bond in grid.bondList]))#set removes duplicates
         self.df = self.df.reindex(self.bondList)
         self.df = self.df[pandas.notnull(self.df['ISIN'])]
+        self.rfbonds = list(self.df.loc[self.df['TICKER'].isin(self.riskFreeIssuers)].index)
+        self.embondsisins = self.df.loc[~self.df['TICKER'].isin(self.riskFreeIssuers), 'ISIN']
+        self.rfbondsisins = self.df.loc[self.df['TICKER'].isin(self.riskFreeIssuers), 'ISIN']
 
     def fillPositions(self):
         """Fills positions if trade history data is available
         """
         if self.th is not None:
             self.df['POSITION'] = self.th.positions['Qty']
+            self.df['REGS'] = self.th.positions['REGS']
+            self.df['144A'] = self.th.positions['144A']
             self.df['POSITION'].fillna(0, inplace=True)
+            self.df['REGS'].fillna(0, inplace=True)
+            self.df['144A'].fillna(0, inplace=True)
+            self.df['RISK'] = -self.df['RISK_MID'] * self.df['POSITION'] / 10000.
 
     def updatePrice(self, isinkey, field, data, bidask):
         """
@@ -162,24 +218,37 @@ class BondDataModel():
         isin = isinkey[0:12]
         bond = regsToBondName[isin]
         if bidask == 'BID':
-            if bond in SPECIALBONDS:
+            if bond in self.rfbonds:
+                self.blptsAnalytics.get(isin + '@CBBT' + ' Corp', self.bbgPriceRFQuery)
+            elif bond in SPECIALBONDS:
                 self.blptsAnalytics.get(isin + BBGHand + ' Corp', self.bbgPriceSpecialQuery)
             else:
-                self.blptsAnalytics.get(isin + BBGHand + ' Corp', self.bbgPriceQuery)
+                try:
+                    self.blptsAnalytics.get(isin + BBGHand + ' Corp', self.bbgPriceQuery)
+                except:
+                    print 'error asking analytics for ' + bond
         elif bidask == 'RTGACC':
             for item, value in data.iteritems():
                 self.updateCell(bond,bbgToBdmDic[item],value)
         else:#'ANALYTICS' or 'FIRSTPASS'
             data = data.astype(float)
-            for item, value in data.iteritems():
-                self.updateCell(bond,bbgToBdmDic[item],value)
+            try:
+                for item, value in data.iteritems():
+                    self.updateCell(bond,bbgToBdmDic[item],value)
+            except:
+                print data
+            if bond in SINKABLEBONDS:
+                self.bbgSinkRequest.fillRequest(isin + ' Corp', ['YAS_ZSPREAD'], strOverrideField='YAS_BOND_PX', strOverrideValue=data['BID'])
+                self.bbgSinkRequest.get()
+                self.updateCell(bond, 'ZB', float(self.bbgSinkRequest.output.values[0,0]))
+                self.bbgSinkRequest.fillRequest(isin + ' Corp', ['YAS_ZSPREAD'], strOverrideField='YAS_BOND_PX', strOverrideValue=data['ASK'])
+                self.bbgSinkRequest.get()                
+                self.updateCell(bond, 'ZA', float(self.bbgSinkRequest.output.values[0,0]))
             if bidask == 'ANALYTICS':
                 self.updateStaticAnalytics(bond)
 
     def send_price_update(self, bonddata):
         pub.sendMessage('BOND_PRICE_UPDATE', message=MessageContainer(bonddata))
-
-
 
     def updateStaticAnalytics(self, bond):
         """Updates static analytics.
@@ -203,31 +272,39 @@ class BondDataModel():
         pub.sendMessage('BOND_PRICE_UPDATE', message=MessageContainer(self.df.loc[bond]))
 
     def updateCell(self, bond, field, value):
-        """Thread safe implementation to update individual cells
-        This needs to be self.df.loc: self.df.set_value or self.df.at doesn't seem to be updating properly - is it too fast?
-        Update 19Jan2016: using Pandas 0.17, .at works. As it's a lot faster (10x) this is what will be used.
-        """
+        # Thread safe implementation to update individual cells
         self.lock.acquire()
-        self.df.at[bond, field] = value         #self.df.loc[bond, field] = value
+        self.df.at[bond, field] = value
         self.lock.release()
 
     def updatePositions(self, message=None):
-        """Updates position
-        """
-        self.df['POSITION'] = message.data['Qty']
-        self.df['POSITION'].fillna(0, inplace=True)
+        # Thread safe implementation to update positions
+        self.lock.acquire()
+        self.df['REGS'] = message.data['REGS']
+        self.df['144A'] = message.data['144A']
+        self.df['REGS'].fillna(0, inplace=True)
+        self.df['144A'].fillna(0, inplace=True)
+        self.df['POSITION'] = self.df['REGS'] + self.df['144A']
+        self.df['RISK'] = -self.df['RISK_MID'] * self.df['POSITION'] / 10000.
+        self.lock.release()
 
     def startUpdates(self):
         """Starts live feed from Bloomberg.
         """
+        # Analytics stream
         self.blptsAnalytics = blpapiwrapper.BLPTS()
         self.streamWatcherAnalytics = StreamWatcher(self, 'ANALYTICS')
         self.blptsAnalytics.register(self.streamWatcherAnalytics)
-        self.bbgstreamBID = blpapiwrapper.BLPStream(list((self.df['ISIN'] + BBGHand + ' Corp').astype(str)), 'BID', 0)
+        # Price change subscription
         self.streamWatcherBID = StreamWatcher(self,'BID')
-        self.bbgstreamBID.register(self.streamWatcherBID)
-        self.bbgstreamBID.start()
-        pass
+        self.bbgstreamBIDEM = blpapiwrapper.BLPStream(list((self.embondsisins + BBGHand + ' Corp').astype(str)), 'BID', 0)
+        self.bbgstreamBIDEM.register(self.streamWatcherBID)
+        self.bbgstreamBIDEM.start()
+        # Risk free bonds: no streaming as too many updates - poll every 10 minutes
+        rfRequest = blpapiwrapper.BLPTS(list((self.rfbondsisins + '@CBBT' + ' Corp').astype(str)), self.bbgPriceRFQuery)
+        self.RFtimer = RFdata(600, rfRequest, self)
+        self.BDMdata = BDMdata(300, self)
+        self.BDMEODsave = BDMEODsave(self)
 
     def firstPass(self, priorityBondList=[]):
         """Loads initial data upon start up. After downloading data on first pass, function will check for bonds
@@ -241,14 +318,26 @@ class BondDataModel():
         self.CHFswapRate = SwapHistory('CHF',self.dtToday)
         self.EURswapRate = SwapHistory('EUR',self.dtToday)
         self.CNYswapRate = SwapHistory('CNY',self.dtToday)
-        currencyList = {'USD':self.USDswapRate,'CHF':self.CHFswapRate,'EUR':self.EURswapRate,'CNY':self.CNYswapRate}
+        currencyList = {'USD': self.USDswapRate, 'CHF': self.CHFswapRate, 'EUR': self.EURswapRate, 'CNY': self.CNYswapRate}
         self.populateRiskFreeRates(currencyList,'INTSWAP','SAVG')
 
-        emptyLines = list(self.df.index) if priorityBondList == [] else priorityBondList
-        isins = self.df.loc[emptyLines, 'ISIN'] + BBGHand + ' Corp'
+        if priorityBondList == []:
+            emptyLines = list(self.df.index)
+            isins = self.embondsisins + BBGHand + ' Corp'
+        else:
+            emptyLines = priorityBondList
+            isins = self.df.loc[priorityBondList, 'ISIN'] + BBGHand + ' Corp'
         isins = list(isins.astype(str))
         blpts = blpapiwrapper.BLPTS(isins, self.bbgPriceQuery)
         blptsStream = StreamWatcher(self,'FIRSTPASS')
+        blpts.register(blptsStream)
+        blpts.get()
+        blpts.closeSession()
+
+        isins = self.rfbondsisins + ' @CBBT Corp'
+        isins = list(isins.astype(str))
+        blpts = blpapiwrapper.BLPTS(isins, self.bbgPriceRFQuery)
+        blptsStream = StreamWatcher(self, 'FIRSTPASS')
         blpts.register(blptsStream)
         blpts.get()
         blpts.closeSession()
@@ -269,8 +358,8 @@ class BondDataModel():
         """
         self.blptsAnalytics.closeSession()
         self.blptsAnalytics = None
-        self.bbgstreamBID.closeSubscription()
-        self.bbgstreamBID = None
+        self.bbgstreamBIDEM.closeSubscription()
+        self.bbgstreamBIDEM = None
         self.streamWatcherBID = None
         self.streamWatcherAnalytics = None
         self.firstPass()
@@ -284,7 +373,7 @@ class BondDataModel():
         self.EURswapRate.refreshRates()
         self.CNYswapRate.refreshRates()
         currencyList = {'USD':self.USDswapRate,'CHF':self.CHFswapRate,'EUR':self.EURswapRate,'CNY':self.CNYswapRate}
-        self.populateRiskFreeRates(currencyList,'INTSWAP','SAVG')
+        self.populateRiskFreeRates(currencyList, 'INTSWAP', 'SAVG')
         for bond in list(self.df.index):
             self.updateStaticAnalytics(bond)
 
@@ -307,7 +396,7 @@ class BondDataModel():
             #rtgaccBLP.closeSession()
 
             ##
-            flds = ['RTG_SP', 'RTG_MOODY', 'RTG_FITCH', 'INT_ACC', 'DAYS_TO_NEXT_COUPON','YRS_TO_SHORTEST_AVG_LIFE','RISK_MID','PRINCIPAL_FACTOR','AMT_OUTSTANDING']
+            flds = ['RTG_SP', 'RTG_MOODY', 'RTG_FITCH', 'INT_ACC', 'DAYS_TO_NEXT_COUPON', 'YRS_TO_SHORTEST_AVG_LIFE', 'RISK_MID', 'PRINCIPAL_FACTOR', 'AMT_OUTSTANDING']
             out = blpapiwrapper.simpleReferenceDataRequest(pandas.Series((self.df['ISIN'] + ' Corp').values, index=self.df.index).to_dict(),flds)[flds]
             #loop
             for f in flds:
@@ -315,8 +404,7 @@ class BondDataModel():
             self.df['RISK_MID'].fillna(0, inplace=True)
             ##
 
-
-            priceHistory = blpapiwrapper.BLPTS(isins, ['PX_LAST', 'YLD_YTM_MID'], startDate=self.dtLastMonth,endDate=self.dtToday)
+            priceHistory = blpapiwrapper.BLPTS(isins, ['PX_LAST', 'YLD_YTM_MID'], startDate=self.dtLastMonth, endDate=self.dtToday)
             priceHistoryStream = StreamWatcherHistory(self)
             priceHistory.register(priceHistoryStream)
             priceHistory.get()
@@ -324,23 +412,23 @@ class BondDataModel():
 
             #Based on today's shortest to average life, calculate the SAVG for yesterday, last week, and last month
             self.df['SAVG'] = self.df['SAVG'].astype(float)
-            self.df['SAVG1D'] = self.df['SAVG']+(self.dtToday - self.dtYesterday).days/365.0
-            self.df['SAVG1W'] = self.df['SAVG']+(self.dtToday - self.dtLastWeek).days/365.0
-            self.df['SAVG1M'] = self.df['SAVG']+(self.dtToday - self.dtLastMonth).days/365.0
+            self.df['SAVG1D'] = self.df['SAVG'] + (self.dtToday - self.dtYesterday).days/365.0
+            self.df['SAVG1W'] = self.df['SAVG'] + (self.dtToday - self.dtLastWeek).days/365.0
+            self.df['SAVG1M'] = self.df['SAVG'] + (self.dtToday - self.dtLastMonth).days/365.0
 
             #Create DataFrames for Swap Rates of different currencies
-            US1D = SwapHistory('USD',self.dtYesterday)
-            US1W = SwapHistory('USD',self.dtLastWeek)
-            US1M = SwapHistory('USD',self.dtLastMonth)
-            CHF1D = SwapHistory('CHF',self.dtYesterday)
-            CHF1W = SwapHistory('CHF',self.dtLastWeek)
-            CHF1M = SwapHistory('CHF',self.dtLastMonth)
-            EUR1D = SwapHistory('EUR',self.dtYesterday)
-            EUR1W = SwapHistory('EUR',self.dtLastWeek)
-            EUR1M = SwapHistory('EUR',self.dtLastMonth)
-            CNY1D = SwapHistory('CNY',self.dtYesterday)
-            CNY1W = SwapHistory('CNY',self.dtLastWeek)
-            CNY1M = SwapHistory('CNY',self.dtLastMonth)         
+            US1D = SwapHistory('USD', self.dtYesterday)
+            US1W = SwapHistory('USD', self.dtLastWeek)
+            US1M = SwapHistory('USD', self.dtLastMonth)
+            CHF1D = SwapHistory('CHF', self.dtYesterday)
+            CHF1W = SwapHistory('CHF', self.dtLastWeek)
+            CHF1M = SwapHistory('CHF', self.dtLastMonth)
+            EUR1D = SwapHistory('EUR', self.dtYesterday)
+            EUR1W = SwapHistory('EUR', self.dtLastWeek)
+            EUR1M = SwapHistory('EUR', self.dtLastMonth)
+            CNY1D = SwapHistory('CNY', self.dtYesterday)
+            CNY1W = SwapHistory('CNY', self.dtLastWeek)
+            CNY1M = SwapHistory('CNY', self.dtLastMonth)         
             #Compute Historical Risk Free Rate for each bonds.
             currencyList1D = {'USD':US1D,'CHF':CHF1D,'EUR':EUR1D,'CNY':CNY1D}
             self.populateRiskFreeRates(currencyList1D,'INTSWAP1D','SAVG1D')
@@ -380,8 +468,6 @@ class BondDataModel():
         print 'History fetched in: ' + str(int(time.time() - time_start)) + ' seconds.'
 
     def updateBenchmarks(self):
-        """Updates benchmarks
-        """
         for grid in self.gridList:
             grid.updateBenchmarks()
 

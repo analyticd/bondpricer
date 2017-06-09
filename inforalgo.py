@@ -103,21 +103,22 @@ bbrgPendTime     = None
 bbrgExtractTime  = None
 #################
 
+UAT_SERVER_CONNECTION_STRING = 'mssql+pyodbc:///?odbc_connect=DRIVER%3D%7BSQL+Server%7D%3BDatabase%3Dinftest%3BSERVER%3DCIBLDNGSQLCU01C%5Cglobalmc_uat03' 
+PRD_SERVER_CONNECTION_STRING = 'mssql+pyodbc:///?odbc_connect=DRIVER%3D%7BSQL+Server%7D%3BDatabase%3Dinfprod%3BSERVER%3DCIBLDNGSQLCP01C%5CGLOBALMC_PRD03' 
 
 class SQLTable():
-    def __init__(self, bdm=None):
-        self.bdm = bdm
+    def __init__(self, connectionString=UAT_SERVER_CONNECTION_STRING):#, bdm=None):
+        # self.bdm = bdm
         #Create sqlalchemy engine
         #connectionString = "mssql+pyodbc://InforAlgo_UAT"#"mssql+pyodbc://CIBLDNGSQLCU01C\GLOBALMC_UAT03/inftest?driver=SQL+Server+Native+Client+11.0?trusted_connection=yes"
-        connectionString = 'mssql+pyodbc:///?odbc_connect=DRIVER%3D%7BSQL+Server%7D%3BDatabase%3Dinftest%3BSERVER%3DCIBLDNGSQLCU01C%5Cglobalmc_uat03'
-        connectionStringPRD = 'mssql+pyodbc:///?odbc_connect=DRIVER%3D%7BSQL+Server%7D%3BDatabase%3Dinftest%3BSERVER%3DCIBLDNGAPPVP080%5Cprd03'
+        # connectionStringUAT = 'mssql+pyodbc:///?odbc_connect=DRIVER%3D%7BSQL+Server%7D%3BDatabase%3Dinftest%3BSERVER%3DCIBLDNGSQLCU01C%5Cglobalmc_uat03'
+        # connectionStringPRD = 'mssql+pyodbc:///?odbc_connect=DRIVER%3D%7BSQL+Server%7D%3BDatabase%3Dinfprod%3BSERVER%3DCIBLDNGSQLCP01C%5CGLOBALMC_PRD03'
         self.engine = sqlalchemy.create_engine(connectionString, legacy_schema_aliasing=False)
         try:
             self.connection = self.engine.connect()
             print  'Connected to ' + connectionString
         except:
             print 'Connection to ' + connectionString + ' failed'
-        pass
 
     def empty_table(self):
         m = sqlalchemy.MetaData()
@@ -173,7 +174,7 @@ class SQLTable():
         pass
 
     def read_table(self):
-        df = pandas.read_sql_table('tblQuote',self.engine,schema='dbo')
+        df = pandas.read_sql_table('tblQuote', self.engine, schema='dbo')
         return df[['bbrgDate','bbrgTime','bbrgStatus','bbrgSec6id','bbrgVala','bbrgValc','bbrgValb','bbrgVald']]
 
     # def start_of_day(self):
