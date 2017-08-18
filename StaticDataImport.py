@@ -31,6 +31,7 @@ LDNFLOWBOOKS = list(gs['LDNFLOWBOOKS'][gs['LDNFLOWBOOKS'].notnull()]) # excludes
 TRADERS = list(gs['TRADERS'][gs['TRADERS'].notnull()])
 frontToEmail = dict(zip(TRADERS,list(gs['EMAIL'][gs['EMAIL'].notnull()])))
 traderLogins = dict(zip(list(gs['WINLOGIN'][gs['WINLOGIN'].notnull()]),TRADERS))
+tabList = read_csv(DEFPATH+'TabListByTrader.csv')
 
 # Chart definitions
 xls = pandas.ExcelFile(DEFPATH+'chart_definitions.xls')

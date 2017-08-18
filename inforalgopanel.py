@@ -233,8 +233,14 @@ class InforalgoControlPanel(ScrolledPanel):
         '''
         This will only push data if it's in the Inforalgo table AND in the Pricer.
         '''
-        df = self.uat_table.read_table()
-        df_prd = self.prd_table.read_table()
+        try:
+            df = self.uat_table.read_table()
+        except:
+            pass
+        try:
+            df_prd = self.prd_table.read_table()
+        except:
+            pass
         bdm_isins = list(self.bdm.df['ISIN'])
         for (i,row) in df.iterrows():
             if row['bbrgSec6id'] in bdm_isins:
