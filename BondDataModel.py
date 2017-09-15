@@ -23,12 +23,33 @@ import datetime
 import os
 import time
 from win32api import GetUserName
+from enum import Enum
 
 from StaticDataImport import ccy, countries, bonds, TEMPPATH, bonduniverseexclusionsList, frontToEmail, SPECIALBONDS, SINKABLEBONDS, BBGHand, regsToBondName, bbgToBdmDic, PHPATH, traderLogins
+
+
+
+# This is 7x slower than checking string but safer (770ns vs 110ns)
+BloombergQuery = Enum('BloombergQuery', ['BID', 'PRICEONLY', 'RTGACC', 'ANALYTICS', 'FIRSTPASS'])
+
 
 class MessageContainer():
     def __init__(self,data):
         self.data = data
+
+
+class StreamWatcher(blpapiwrapper.Observer):
+    """StreamWatcher class : Class to stream and update analytic data from Bloomberg
+    BID keyword for watching events, ANALYTICS to get everything once event triggered, FIRSTPASS for first pass, RTGACC for ratings
+    """
+    def __init__(self, bdm, qtype = BloombergQuery.BID):
+        self.bdm = bdm
+        self.qtype = qtype
+
+    def update(self, *args, **kwargs):
+        if kwargs['field'] == 'ALL':
+            self.bdm.updatePrice(kwargs['security'], kwargs['field'], kwargs['data'], self.qtype)
+
 
 def getMaturityDate(d):
     # Function to parse maturity date in YYYY-MM-DD format. Override for perps
@@ -45,14 +66,13 @@ class RFdata(wx.Timer):
         self.bdm = bdm
         self.req = req                     
         self.Bind(wx.EVT_TIMER, self.refreshRFBonds)
-        self.Start(1000*secs, oneShot = False)
+        self.Start(1000 * secs, oneShot=False)
 
     def refreshRFBonds(self,event):
         self.req.get()
         out = self.req.output.astype(float)
         for (isinkey, data) in out.iterrows():
-            self.bdm.updatePrice(isinkey, 'ALL', data, 'ANALYTICS')
-        # print 'Refreshed RF bonds'
+            self.bdm.updatePrice(isinkey, 'ALL', data, BloombergQuery.ANALYTICS)
 
 
 class BDMdata(wx.Timer):
@@ -61,7 +81,7 @@ class BDMdata(wx.Timer):
         self.bdm = bdm
         self.dic = pandas.Series((self.bdm.df['ISIN'] + '@BGN Corp').values, index=self.bdm.df.index).to_dict()
         self.Bind(wx.EVT_TIMER, self.refreshBDMPrice)
-        self.Start(1000*secs, oneShot = False)
+        self.Start(1000 * secs, oneShot=False)
 
     def refreshBDMPrice(self,event):
         out = blpapiwrapper.simpleReferenceDataRequest(self.dic,'PX_MID')['PX_MID']
@@ -79,7 +99,7 @@ class BDMEODsave(wx.Timer):
         now = datetime.datetime.now()
         fivepm = now.replace(hour=17, minute = 0, second = 0)
         now_to_five_pm = (fivepm - now).total_seconds()
-        self.Start(1000*now_to_five_pm, oneShot = True)
+        self.Start(1000 * now_to_five_pm, oneShot=True)
 
     def saveFile(self, event):
         self.bdm.firstPass()
@@ -102,10 +122,6 @@ class BondDataModel():
     self.th : trade history data. (defaults to None if mainframe is not specified. 
                                     This is to allow Pricer to be launched independently without having to connect to Front)
     self.df : pandas.DataFrame consisting of all the bonds' information
-    self.USDswapRate : Interpolated US Swap rates
-    self.CHFswapRate : Interpolated CHF Swap rates 
-    self.EURswapRate : Interpolated EUR Swap rates
-    self.CNYswapRate : Interpolated CNY Swap rates 
 
     Methods:
     __init__()
@@ -173,7 +189,7 @@ class BondDataModel():
         self.bondList = []
         self.bbgPriceOnlyQuery = ['BID', 'ASK', 'BID_SIZE', 'ASK_SIZE']
         self.bbgPriceQuery = ['YLD_CNV_BID', 'Z_SPRD_BID', 'RSI_14D']
-        self.bbgPriceSpecialQuery = ['YLD_CNV_BID', 'OAS_SPREAD_BID','RSI_14D']
+        self.bbgPriceSpecialQuery = ['YLD_CNV_BID', 'OAS_SPREAD_BID', 'RSI_14D']
         self.bbgPriceLongQuery = ['BID', 'ASK', 'YLD_CNV_BID', 'Z_SPRD_BID', 'RSI_14D', 'BID_SIZE', 'ASK_SIZE']
         self.bbgPriceLongSpecialQuery = ['BID', 'ASK', 'YLD_CNV_BID', 'OAS_SPREAD_BID', 'RSI_14D', 'BID_SIZE', 'ASK_SIZE']
 
@@ -210,19 +226,19 @@ class BondDataModel():
             self.df['144A'].fillna(0, inplace=True)
             self.df['RISK'] = -self.df['RISK_MID'] * self.df['POSITION'] / 10000.
 
-    def updatePrice(self, isinkey, field, data, bidask):
+    def updatePrice(self, isinkey, field, data, qtype):
         """
         Gets called by StreamWatcher. 
         Keyword arguments:
         isinkey : ISIN 
         field : field to update, not used
         data : data, a pandas Series
-        bidask : 'BID' fetches new events from bloomberg. 'ANALYTICS', 'FIRSTPASS' or 'RTGACC' updates cells in grid.
+        qtype : 'BID' fetches new events from bloomberg. 'ANALYTICS', 'FIRSTPASS' or 'RTGACC' updates cells in grid.
         Importantly, there can be a 'BID' event without any data, so one needs to specifically call for the BID as well after an event.
         """
         isin = isinkey[0:12]
         bond = regsToBondName[isin]
-        if bidask == 'BID':
+        if qtype == BloombergQuery.BID:
             # 1/ WE CACHE THE OLD PRICE
             self.updateCell(bond, 'OLDBID', self.df.at[bond, 'BID'])
             self.updateCell(bond, 'OLDASK', self.df.at[bond, 'ASK'])
@@ -231,10 +247,14 @@ class BondDataModel():
                 self.blptsAnalytics.get(isin + '@CBBT' + ' Corp', self.bbgPriceRFQuery)
             else:
                 self.blptsPriceOnly.get(isin + BBGHand + ' Corp', self.bbgPriceOnlyQuery)
-        elif bidask == 'PRICEONLY':
+        elif qtype == BloombergQuery.PRICEONLY:
             data = data.astype(float)
+            # for item, value in data.iteritems():
+            #     self.updateCell(bond,bbgToBdmDic[item],value)
+            self.lock.acquire()
             for item, value in data.iteritems():
-                self.updateCell(bond,bbgToBdmDic[item],value)
+                self.df.at[bond, bbgToBdmDic[item]] = value
+            self.lock.release()
             if (data['BID'] != self.df.at[bond, 'OLDBID']) or (data['ASK'] != self.df.at[bond, 'OLDASK']):
                 if bond in SPECIALBONDS:
                     self.blptsAnalytics.get(isin + BBGHand + ' Corp', self.bbgPriceSpecialQuery)
@@ -247,16 +267,24 @@ class BondDataModel():
             else:
                 # print 'Update event without a price change for ' + bond
                 pub.sendMessage('BOND_PRICE_UPDATE', message=MessageContainer(self.df.loc[bond]))
-        elif bidask == 'RTGACC':
+        elif qtype == BloombergQuery.RTGACC:
             for item, value in data.iteritems():
                 self.updateCell(bond,bbgToBdmDic[item],value)
         else:#'ANALYTICS' or 'FIRSTPASS'
             data = data.astype(float)
+            # try:
+            #     for item, value in data.iteritems():
+            #         self.updateCell(bond,bbgToBdmDic[item],value)
+            # except:
+            #     print data
+            self.lock.acquire()
             try:
                 for item, value in data.iteritems():
-                    self.updateCell(bond,bbgToBdmDic[item],value)
+                    self.df.at[bond, bbgToBdmDic[item]] = value
             except:
+                self.lock.release()
                 print data
+            self.lock.release()
             if bond in SINKABLEBONDS:
                 #self.bbgSinkRequest.fillRequest(isin + ' Corp', ['YAS_ZSPREAD'], strOverrideField='YAS_BOND_PX', strOverrideValue=data['BID'])
                 self.bbgSinkRequest.fillRequest(isin + ' Corp', ['YAS_ZSPREAD'], strOverrideField='YAS_BOND_PX', strOverrideValue=self.df.at[bond, 'BID'])
@@ -266,7 +294,7 @@ class BondDataModel():
                 # self.bbgSinkRequest.fillRequest(isin + ' Corp', ['YAS_ZSPREAD'], strOverrideField='YAS_BOND_PX', strOverrideValue=self.df.at[bond, 'ASK'])
                 # self.bbgSinkRequest.get()                
                 # self.updateCell(bond, 'ZA', float(self.bbgSinkRequest.output.values[0,0]))
-            if bidask == 'ANALYTICS':
+            if qtype == BloombergQuery.ANALYTICS:
                 self.updateStaticAnalytics(bond)
 
     def send_price_update(self, bonddata):
@@ -322,21 +350,21 @@ class BondDataModel():
         """
         # Analytics stream
         self.blptsAnalytics = blpapiwrapper.BLPTS()
-        self.streamWatcherAnalytics = StreamWatcher(self, 'ANALYTICS')
+        self.streamWatcherAnalytics = StreamWatcher(self, BloombergQuery.ANALYTICS)
         self.blptsAnalytics.register(self.streamWatcherAnalytics)
         # Price only stream
         self.blptsPriceOnly = blpapiwrapper.BLPTS()
-        self.streamWatcherPriceOnly = StreamWatcher(self, 'PRICEONLY')
+        self.streamWatcherPriceOnly = StreamWatcher(self, BloombergQuery.PRICEONLY)
         self.blptsPriceOnly.register(self.streamWatcherPriceOnly)
         # Price change subscription
-        self.streamWatcherBID = StreamWatcher(self,'BID')
+        self.streamWatcherBID = StreamWatcher(self,BloombergQuery.BID)
         self.bbgstreamBIDEM = blpapiwrapper.BLPStream(list((self.embondsisins + BBGHand + ' Corp').astype(str)), 'BID', 0)
         self.bbgstreamBIDEM.register(self.streamWatcherBID)
         self.bbgstreamBIDEM.start()
         # Risk free bonds: no streaming as too many updates - poll every 15 minutes
         rfRequest = blpapiwrapper.BLPTS(list((self.rfbondsisins + '@CBBT' + ' Corp').astype(str)), self.bbgPriceRFQuery)
         self.RFtimer = RFdata(900, rfRequest, self)
-        self.BDMdata = BDMdata(1200, self) #20 MINUTES
+        self.BDMdata = BDMdata(900, self) #15 MINUTES
         self.BDMEODsave = BDMEODsave(self)
 
     def firstPass(self, priorityBondList=[]):
@@ -355,7 +383,7 @@ class BondDataModel():
             isins = self.df.loc[priorityBondList, 'ISIN'] + BBGHand + ' Corp'
         isins = list(isins.astype(str))
         blpts = blpapiwrapper.BLPTS(isins, self.bbgPriceLongQuery)
-        blptsStream = StreamWatcher(self,'FIRSTPASS')
+        blptsStream = StreamWatcher(self,BloombergQuery.FIRSTPASS)
         blpts.register(blptsStream)
         blpts.get()
         blpts.closeSession()
@@ -363,7 +391,7 @@ class BondDataModel():
         isins = self.rfbondsisins + ' @CBBT Corp'
         isins = list(isins.astype(str))
         blpts = blpapiwrapper.BLPTS(isins, self.bbgPriceRFQuery)
-        blptsStream = StreamWatcher(self, 'FIRSTPASS')
+        blptsStream = StreamWatcher(self, BloombergQuery.FIRSTPASS)
         blpts.register(blptsStream)
         blpts.get()
         blpts.closeSession()
@@ -371,7 +399,7 @@ class BondDataModel():
         specialBondList = list(set(emptyLines) & set(SPECIALBONDS))
         specialIsins = map(lambda x:self.df.at[x,'ISIN'] + BBGHand + ' Corp',specialBondList)
         blpts = blpapiwrapper.BLPTS(specialIsins, self.bbgPriceLongSpecialQuery)
-        specialbondStream = StreamWatcher(self,'FIRSTPASS')
+        specialbondStream = StreamWatcher(self,BloombergQuery.FIRSTPASS)
         blpts.register(specialbondStream)
         blpts.get()
         blpts.closeSession()
@@ -514,15 +542,16 @@ class BondDataModel():
         pass
 
 
-class StreamWatcher(blpapiwrapper.Observer):
-    """StreamWatcher class : Class to stream and update analytic data from Bloomberg
-    BID keyword for watching events, ANALYTICS to get everything once event triggered, FIRSTPASS for first pass, RTGACC for ratings
-    """
-    def __init__(self, bdm, bidask='BID'):
-        self.bdm = bdm
-        self.bidask = bidask
+# class StreamWatcher(blpapiwrapper.Observer):
+#     """StreamWatcher class : Class to stream and update analytic data from Bloomberg
+#     BID keyword for watching events, ANALYTICS to get everything once event triggered, FIRSTPASS for first pass, RTGACC for ratings
+#     """
+#     def __init__(self, bdm, bidask='BID'):
+#         self.bdm = bdm
+#         self.bidask = bidask
+#
+#     def update(self, *args, **kwargs):
+#         if kwargs['field'] == 'ALL':
+#             self.bdm.updatePrice(kwargs['security'], kwargs['field'], kwargs['data'], self.bidask)
 
-    def update(self, *args, **kwargs):
-        if kwargs['field'] == 'ALL':
-            self.bdm.updatePrice(kwargs['security'], kwargs['field'], kwargs['data'], self.bidask)
 

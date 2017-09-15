@@ -38,11 +38,11 @@ from subprocess import Popen
 from win32api import GetUserName
 
 
-from StaticDataImport import bonds, DEFPATH, APPPATH, bondRuns, frontToEmail, SPECIALBONDS, colFormats, runTitleStr, regsToBondName, tabList#grid_labels, 
+from StaticDataImport import bonds, DEFPATH, APPPATH, bondRuns, frontToEmail, SPECIALBONDS, colFormats, runTitleStr, regsToBondName, tabList, columnListByTrader
 from BondDataModel import BondDataModel
 
 class MessageContainer():
-    def __init__(self,data):
+    def __init__(self, data):
         self.data = data
 
 
@@ -83,6 +83,119 @@ class TextDisplayWindow(wx.Frame):
         f.close()
         multiText.SetFont(wx.Font(multiText.GetFont().GetPointSize(), wx.TELETYPE, wx.NORMAL, wx.NORMAL))
         self.Show()
+
+
+class AxeGrid(wx.Frame):
+    def __init__(self, title, bdm, bondList):
+        wx.Frame.__init__(self, None, wx.ID_ANY, title, size=(800, 600))
+        panel = wx.Panel(self) 
+        sizer = wx.BoxSizer()
+
+        self.grid = gridlib.Grid(panel)
+        self.grid.Bind(wx.EVT_KEY_DOWN, self.onKeyDown)
+        sizer.Add(self.grid, proportion=1, flag=wx.EXPAND)
+        #Attributes creation
+        self.fontBold = self.grid.GetDefaultCellFont()
+        self.fontBold.SetWeight(wx.FONTWEIGHT_BOLD)
+        defattr = wx.grid.GridCellAttr()
+        defattr.SetReadOnly(True)
+        bidaskinputattr = wx.grid.GridCellAttr()
+        bidaskinputattr.SetReadOnly(False)
+        bidaskinputattr.SetAlignment(wx.ALIGN_RIGHT, wx.ALIGN_CENTRE)
+        bidaskinputattr.SetFont(self.fontBold)
+        bidaskinputattr.SetTextColour(wx.BLUE)
+        bidasksizeinputattr = wx.grid.GridCellAttr()
+        bidasksizeinputattr.SetReadOnly(False)
+        bidasksizeinputattr.SetAlignment(wx.ALIGN_RIGHT, wx.ALIGN_CENTRE)
+        bidasksizeinputattr.SetFont(self.fontBold)
+
+        self.columnList = ['Security', 'B Axe', 'B Sz(M)', 'B Px', 'A Axe', 'A Sz(M)', 'A Px']
+
+        self.grid.CreateGrid(200, len(self.columnList))
+        bidasksizeinputattr.SetTextColour(wx.BLUE)
+        
+        self.grid.SetColAttr(0, defattr)
+        self.grid.SetColSize(0, 100)
+        self.grid.SetColAttr(1, defattr)
+        self.grid.SetColSize(1, 50)
+        self.grid.SetColAttr(2, bidasksizeinputattr)
+        self.grid.SetColSize(2, 50)
+        self.grid.SetColAttr(3, bidaskinputattr)
+        self.grid.SetColSize(3, 50)
+        self.grid.SetColAttr(4, defattr)
+        self.grid.SetColSize(4, 50)
+        self.grid.SetColAttr(5, bidasksizeinputattr)
+        self.grid.SetColSize(5, 50)
+        self.grid.SetColAttr(6, bidaskinputattr)
+        self.grid.SetColSize(6, 50)
+
+        self.grid.SetRowLabelSize(100)
+
+        for (j, header) in enumerate(self.columnList):
+            self.grid.SetColLabelValue(j, header)
+
+        i = 0
+        for bond in bondList:
+            if bond not in bdm.df.index:
+                continue
+            if bdm.df.at[bond,'POSITION']==0:
+                continue
+            self.grid.SetRowLabelValue(i, bond)
+            self.grid.SetCellValue(i, 0, bdm.df.at[bond, 'ISIN'])
+            if bdm.df.at[bond,'POSITION']<0:
+                self.grid.SetCellValue(i, 1, 'Y')
+                self.grid.SetCellValue(i, 2, '{:.0f}'.format(-bdm.df.at[bond, 'POSITION']/1000.))
+                self.grid.SetCellValue(i, 3, '{:,.3f}'.format(bdm.df.at[bond, 'BID']))
+            if bdm.df.at[bond,'POSITION']>0:
+                self.grid.SetCellValue(i, 4, 'Y')
+                self.grid.SetCellValue(i, 5, '{:.0f}'.format(bdm.df.at[bond, 'POSITION']/1000.))
+                self.grid.SetCellValue(i, 6, '{:,.3f}'.format(bdm.df.at[bond, 'ASK']))
+            i = i + 1
+        panel.SetSizerAndFit(sizer)
+        self.Show()
+        pass
+
+    def onCopySelection(self):
+    # Number of rows and cols
+        if self.grid.GetSelectionBlockTopLeft() == []:
+            rows = 1
+            cols = 1
+            iscell = True
+        else:
+            rows = self.grid.GetSelectionBlockBottomRight()[0][0] - self.grid.GetSelectionBlockTopLeft()[0][0] + 1
+            cols = self.grid.GetSelectionBlockBottomRight()[0][1] - self.grid.GetSelectionBlockTopLeft()[0][1] + 1
+            iscell = False
+        # data variable contain text that must be set in the clipboard
+        data = ''
+        # For each cell in selected range append the cell value in the data variable
+        # Tabs '\t' for cols and '\r' for rows
+        for r in range(rows):
+            for c in range(cols):
+                if iscell:
+                    data += str(self.grid.GetCellValue(self.grid.GetGridCursorRow() + r, self.grid.GetGridCursorCol() + c))
+                else:
+                    data += str(self.grid.GetCellValue(self.grid.GetSelectionBlockTopLeft()[0][0] + r, self.grid.GetSelectionBlockTopLeft()[0][1] + c))
+                if c < cols - 1:
+                    data += '\t'
+            data += '\n'
+        # Create text data object
+        clipboard = wx.TextDataObject()
+        # Set data object value
+        clipboard.SetText(data)
+        # Put the data in the clipboard
+        if wx.TheClipboard.Open():
+            wx.TheClipboard.SetData(clipboard)
+            wx.TheClipboard.Close()
+        else:
+            wx.MessageBox("Can't open the clipboard", "Error")
+
+    def onKeyDown(self, event):
+        keycode = event.GetKeyCode()
+        if keycode == 67 and event.ControlDown():
+            self.onCopySelection()
+        else:
+            pass
+        event.Skip() # important, otherwise one would need to define all possible events
 
 
 class RunsGrid(gridlib.Grid):
@@ -462,6 +575,8 @@ class PricingGrid(gridlib.Grid):
         self.previousSingleSelection = True
         self.singleSelection = True
 
+        self.askCol = self.columnList.index('ASK')
+
     def initialPaint(self):
         """
         Function to paint the background colour orange when Pricer is first loaded. Function is called by
@@ -614,10 +729,10 @@ class PricingGrid(gridlib.Grid):
                     newValue = self.readInput(oldValue,strNewValue)
                     self.SetCellValue(row,col,'{:,.3f}'.format(newValue))
                     try:
-                        oldOffer = float(self.GetCellValue(row, col + 1))
+                        oldOffer = float(self.GetCellValue(row, self.askCol))
                     except:
                         oldOffer = 0
-                    self.SetCellValue(row,col+1,'{:,.3f}'.format(newValue + oldOffer - oldValue))
+                    self.SetCellValue(row,self.askCol,'{:,.3f}'.format(newValue + oldOffer - oldValue))
                     self.sendUpdateToInforalgo(row)
 
     def onEditSingleCell(self,event):
@@ -637,10 +752,10 @@ class PricingGrid(gridlib.Grid):
             self.SetCellValue(row, col, '{:,.0f}'.format(newValue))
         if colID == 'BID':
             try:
-                oldOffer = float(self.GetCellValue(row,col + 1))
+                oldOffer = float(self.GetCellValue(row, self.askCol))
             except:
                 oldOffer = 0
-            self.SetCellValue(row, col + 1, '{:,.3f}'.format(newValue + oldOffer - oldValue))
+            self.SetCellValue(row, self.askCol, '{:,.3f}'.format(newValue + oldOffer - oldValue))
         self.sendUpdateToInforalgo(row)
 
     def sendUpdateToInforalgo(self, row):
@@ -680,38 +795,9 @@ class PricingGrid(gridlib.Grid):
                 delta = float(strNewValue[1:])
             except:
                 delta = 0
-            if delta == 116:
-                delta = 0.063
-            elif delta == 18:
-                delta = 0.125
-            elif delta == 316:
-                delta = 0.188
-            elif delta == 14:
-                delta = 0.25
-            elif delta == 516:
-                delta = 0.313
-            elif delta == 38:
-                delta = 0.375
-            elif delta == 716:
-                delta = 0.438
-            elif delta == 12:
-                delta = 0.5
-            elif delta == 916:
-                delta = 0.563
-            elif delta == 58:
-                delta = 0.625
-            elif delta == 1116:
-                delta = 0.688
-            elif delta == 34:
-                delta = 0.75
-            elif delta == 1316:
-                delta = 0.813
-            elif delta == 78:
-                delta = 0.875
-            elif delta == 1516:
-                delta = 0.938
-            else:
-                pass
+            delta_dic = {116: 0.063, 18: 0.125, 316: 0.188, 14: 0.25, 516: 0.313, 38: 0.375, 716: 0.438, 12: 0.5, 916: 0.563, 58: 0.625, 1116: 0.688, 34: 0.75, 1316: 0.813, 78: 0.875, 1516: 0.938}
+            if delta in delta_dic:
+                delta = delta_dic[delta]
             if strNewValue[0] == '+':
                 newValue = oldValue + delta
             else:
@@ -724,7 +810,7 @@ class PricingGrid(gridlib.Grid):
                 newValue = oldValue
         return newValue
 
-    def dataSentWarning(self,row):
+    def dataSentWarning(self, row):
         for cell in ['BID', 'ASK', 'BID_S', 'ASK_S']:
             self.SetCellBackgroundColour(row, self.columnList.index(cell), wx.YELLOW)
 
@@ -1054,16 +1140,18 @@ class PricerWindow(wx.Frame):
                              'BENCHMARK', 'RSI14', 'ACCRUED', 'D2CPN', 'S / M / F', 'COUPON', 'MATURITY', 'SIZE']#removed columns: 'DY(1D/1W/1M)' POS AFTER RSI14
         try:
             grid_labels = list(tabList[GetUserName()][tabList[GetUserName()].notnull()])
+            columnList = list(columnListByTrader[GetUserName()][columnListByTrader[GetUserName()].notnull()])
         except:
             grid_labels = list(tabList['other'][tabList['other'].notnull()])
+            columnList = defaultColumnList
         ####DEBUG MODE######
-        ####grid_labels = ['Africa', 'IRHedges']# used for testing
+        #grid_labels = ['Africa', 'IRHedges']# used for testing
         ####END DEBUG MODE######
         for label in grid_labels:#
             csv = pandas.read_csv(DEFPATH+label+'Tab.csv')
             csv['Bonds'].fillna('', inplace=True)
             tab = wx.Panel(parent=self.notebook)
-            grid = PricingGrid(tab, csv, defaultColumnList, self.bdm, self)
+            grid = PricingGrid(tab, csv, columnList, self.bdm, self)
             self.gridList.append(grid)
             self.notebook.AddPage(tab, label)
             sizer = wx.BoxSizer()
@@ -1095,18 +1183,20 @@ class PricerWindow(wx.Frame):
         sizer = wx.BoxSizer(wx.VERTICAL)
         buttonsPanel = wx.Panel(self.panel)
         sizer.Add(buttonsPanel, 0.25, wx.EXPAND, 10)
-        buttonPanelSizer = wx.GridSizer(1,6,0,0)
+        buttonPanelSizer = wx.GridSizer(1,7,0,0)
         #Create buttons
-        self.frontButton = wx.Button(buttonsPanel, label='Refresh Front data')
+        self.frontButton = wx.Button(buttonsPanel, label='Refresh trades')
         self.frontButton.Bind(wx.EVT_BUTTON, self.onRefreshFrontData)
         #self.lastUpdateTime = wx.TextCtrl(buttonsPanel, -1, self.lastUpdateString())
-        ratesButton = wx.Button(buttonsPanel, label='Refresh Rates')
+        ratesButton = wx.Button(buttonsPanel, label='Refresh rates')
         ratesButton.Bind(wx.EVT_BUTTON, self.onRefreshSwapRates)
         #self.ratesUpdateTime = wx.TextCtrl(buttonsPanel, -1, 'Starting...')
-        bloomButton = wx.Button(buttonsPanel, label="Restart Bloomberg connection")
+        bloomButton = wx.Button(buttonsPanel, label="Restart Bbrg link")
         bloomButton.Bind(wx.EVT_BUTTON, self.onRestartBloombergConnection)
+        axeButton = wx.Button(buttonsPanel, label="Axe sheet")
+        axeButton.Bind(wx.EVT_BUTTON, self.onAxeSheet)
         #self.bloomUpdateTime = wx.TextCtrl(buttonsPanel, -1, 'Starting...')
-        editTabButton = wx.Button(buttonsPanel, label='Edit current tab')
+        editTabButton = wx.Button(buttonsPanel, label='Edit tab')
         editTabButton.Bind(wx.EVT_BUTTON, self.onEditTab)
         tipButton = wx.Button(buttonsPanel, label='Tips')
         tipButton.Bind(wx.EVT_BUTTON, self.onTips)
@@ -1121,6 +1211,7 @@ class PricerWindow(wx.Frame):
             (self.frontButton,1,wx.EXPAND,2),
             (ratesButton,1,wx.EXPAND,2),
             (bloomButton,1,wx.EXPAND,2),
+            (axeButton,1,wx.EXPAND,2),
             (editTabButton,1,wx.EXPAND,2),
             (tipButton,1,wx.EXPAND,2),
             (aboutButton,1,wx.EXPAND,2)#,
@@ -1233,6 +1324,13 @@ class PricerWindow(wx.Frame):
         #self.bloomUpdateTime.SetValue(self.lastUpdateString())
         self.statusbar.SetStatusText('Last Bloomberg restart: ' + datetime.datetime.now().strftime('%H:%M'),2)
         #busyDlg = None 
+        pass
+
+    def onAxeSheet(self, event):
+        tabName = self.notebook.GetPageText(self.notebook.GetSelection())
+        csv = pandas.read_csv(DEFPATH+tabName+'Tab.csv')
+        csv['Bonds'].fillna('', inplace=True)
+        AxeGrid('Axe list: ' + tabName,self.bdm, csv['Bonds'])
         pass
 
     def lastSwapRefreshTime(self):
